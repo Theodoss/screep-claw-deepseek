@@ -96,18 +96,7 @@ module.exports = {
 
     // ── We are in the target room ──
     if (targetRoom && creep.room.name === targetRoom) {
-      // Priority 0: move to staging position if set
-      const targetPos = military.targetPos;
-      if (targetPos && targetPos.roomName === targetRoom &&
-          creep.pos.getRangeTo(targetPos.x, targetPos.y) > 3) {
-        creep.moveTo(targetPos.x, targetPos.y, {
-          visualizePathStyle: { stroke: '#ff0000' }
-        });
-        creep.memory.task = 'move:staging';
-        return;
-      }
-
-      // Priority 1: kill enemy creeps
+      // Priority 1: kill enemy creeps immediately, no staging
       if (findAndAttackHostile(creep)) return;
 
       // Priority 2: camp at source to block harvesters
