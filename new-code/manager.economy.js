@@ -219,8 +219,9 @@ function update(room, context) {
   const defenseReserve = input.hostilesCount > 0
     ? incomeRate
     : Math.min(0.5, incomeRate * 0.05);
+  const healthy = !input.energyStarved && input.haulersHealthy !== false && input.minersHealthy !== false;
   const safetyReserve = incomeRate > 0
-    ? Math.max(1, incomeRate * 0.1)
+    ? Math.max(1, incomeRate * (healthy ? 0.05 : 0.1))
     : 0;
   const emergency = controllerEmergency(room);
   const recovery = !!(
