@@ -125,9 +125,9 @@ function controllerEmergency(room) {
   );
 }
 
-// Attack preparation: continuous small-wave harassment + extension building.
-// RCL3+: spawn small attack creeps (1T,2A,2M) continuously.
-// RCL4+: also build extensions while attacking.
+// Attack preparation: two-phase military buildup at RCL4+.
+// Phase 1 (extensions building): small-wave harassment (1T,2A,2M = 270e) + minimal upgrade.
+// Phase 2 (extensions full): big-wave attack creeps (max capacity) + zero upgrade.
 
 function getExtensionMax(rcl) {
   if (typeof CONTROLLER_STRUCTURES === 'undefined') return 60;
@@ -147,7 +147,7 @@ function getExtensionSiteCount(room) {
 }
 
 function isPreparingAttack(room) {
-  if (!room.controller || room.controller.level < 3) return false;
+  if (!room.controller || room.controller.level < 4) return false;
 
   const roomMemory = Memory.rooms && Memory.rooms[room.name]
     ? Memory.rooms[room.name]
@@ -159,8 +159,12 @@ function isPreparingAttack(room) {
 }
 
 function isAttackPhaseSpawn(room) {
-  // Always allow spawning attack creeps during prep
-  return true;
+  // Phase 2 check: extensions all built (or sited) → ready for big attack creeps
+  const rcl = room.controller ? room.controller.level : 4;
+  const maxExt = getExtensionMax(rcl);
+  const builtExt = getExtensionCount(room);
+  const siteExt = getExtensionSiteCount(room);
+  return (builtExt + siteExt) >= maxExt;
 }
 
 function startAttackPrep(room) {
@@ -236,10 +240,14 @@ function update(room, context) {
     ) * 0.8
   );
 
-  // Attack preparation: keep minimal upgrade, rest goes to attack creeps
+  // Attack preparation: phase 1 → minimal upgrade; phase 2 → zero upgrade
   if (isPreparingAttack(room)) {
     startAttackPrep(room);
-    upgradeRate = 1;
+    if (isAttackPhaseSpawn(room)) {
+      upgradeRate = 0;
+    } else {
+      upgradeRate = 1;
+    }
     recovery = false;
   }
 

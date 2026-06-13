@@ -261,10 +261,28 @@ function buildGuardBody(energyCapacity) {
   return body;
 }
 
-function buildAttackBody(energyCapacity) {
-  // Small-wave harassment: 1 TOUGH (tank), 2 ATTACK (60 DPS), 2 MOVE (speed)
+function buildSmallAttackBody() {
+  // Phase 1 harassment: 1 TOUGH (tank), 2 ATTACK (60 DPS), 2 MOVE (speed)
   // Body: [TOUGH, ATTACK, ATTACK, MOVE, MOVE] = 270e
-  const body = [TOUGH, ATTACK, ATTACK, MOVE, MOVE];
+  return [TOUGH, ATTACK, ATTACK, MOVE, MOVE];
+}
+
+function buildBigAttackBody(energyCapacity) {
+  // Phase 2 final push: max ATTACK for DPS, TOUGH front, MOVE for mobility.
+  const body = [];
+  const BASE_TOUGH = 10;
+  const BASE_ATTACK = 80;
+  const BASE_MOVE = 50;
+
+  const toughParts = Math.max(2, Math.floor(energyCapacity * 0.08 / BASE_TOUGH));
+  let remaining = energyCapacity - toughParts * BASE_TOUGH;
+
+  const pairCost = BASE_ATTACK + BASE_MOVE;
+  const pairs = Math.floor(remaining / pairCost);
+
+  for (let i = 0; i < toughParts; i++) body.push(TOUGH);
+  for (let i = 0; i < pairs; i++) body.push(ATTACK, MOVE);
+
   return body;
 }
 
@@ -583,10 +601,13 @@ function run(room, state) {
     if (spawnedMaintainer) return;
   }
 
-  // Attack preparation: spawn small-wave attack creep when energy permits.
-  // Miner/hauler already handled above — save energy if attack spawn fails.
+  // Attack preparation: phase 1 → small harass creeps; phase 2 → big attack creeps
   if (economy.isPreparingAttack(room)) {
-    const attackBody = buildAttackBody();
+    const inPhase2 = economy.isAttackPhaseSpawn(room);
+    const attackBody = inPhase2
+      ? buildBigAttackBody(room.energyCapacityAvailable)
+      : buildSmallAttackBody();
+    const label = inPhase2 ? 'BIG ATTACK' : 'harass';
     const name = `attack-${room.name}-${spawn.name}-${Game.time}`;
     const result = spawn.spawnCreep(attackBody, name, {
       memory: { role: 'guard', home: room.name, attackCreep: true }
@@ -594,7 +615,7 @@ function run(room, state) {
     if (result === OK) {
       economy.recordAttackCreepSpawned(room);
       console.log('[spawn] ' + spawn.name + ' spawning ' + name +
-        ' (harass, ' + attackBody.length + ' parts, 270e)');
+        ' (' + label + ', ' + attackBody.length + ' parts)');
     }
     return;
   }
