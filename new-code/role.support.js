@@ -1,6 +1,6 @@
 const economy = require('manager.economy');
 
-const TOWER_PEACE_RESERVE = 400;
+const TOWER_PEACE_RESERVE = 600;
 const roomWorkCache = {};
 
 function getRoomData(room) {
