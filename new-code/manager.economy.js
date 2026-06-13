@@ -224,7 +224,7 @@ function update(room, context) {
     ? Math.max(1, incomeRate * (healthy ? 0.05 : 0.1))
     : 0;
   const emergency = controllerEmergency(room);
-  const recovery = !!(
+  let recovery = !!(
     input.energyStarved ||
     input.minersHealthy === false ||
     input.haulersHealthy === false
@@ -242,7 +242,7 @@ function update(room, context) {
   );
 
   // Attack preparation: phase 1 → minimal upgrade; phase 2 → zero upgrade
-  if (isPreparingAttack(room)) {
+  if (input.hostilesCount > 0 && isPreparingAttack(room)) {
     startAttackPrep(room);
     if (isAttackPhaseSpawn(room)) {
       upgradeRate = 0;
