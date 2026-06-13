@@ -125,6 +125,57 @@ function controllerEmergency(room) {
   );
 }
 
+// Attack preparation: when RCL hits 4+ and attack force not yet built,
+// suspend upgrades and divert all energy to attacking creeps.
+const ATTACK_PREP_TARGET = 2;
+
+function isPreparingAttack(room) {
+  if (!room.controller || room.controller.level < 4) return false;
+
+  const roomMemory = Memory.rooms && Memory.rooms[room.name]
+    ? Memory.rooms[room.name]
+    : {};
+  const prep = roomMemory.attackPrep || {};
+
+  if (prep.completed) return false;
+  if ((prep.spawnedCount || 0) >= ATTACK_PREP_TARGET) return false;
+
+  return true;
+}
+
+function startAttackPrep(room) {
+  if (!Memory.rooms) Memory.rooms = {};
+  if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+
+  const roomMemory = Memory.rooms[room.name];
+  if (!roomMemory.attackPrep) {
+    roomMemory.attackPrep = {
+      startedAt: Game.time,
+      spawnedCount: 0,
+      completed: false
+    };
+    console.log('[military] attack preparation started at RCL',
+      room.controller ? room.controller.level : '?');
+  }
+}
+
+function recordAttackCreepSpawned(room) {
+  if (!Memory.rooms || !Memory.rooms[room.name]) return;
+  const prep = Memory.rooms[room.name].attackPrep;
+  if (!prep || prep.completed) return;
+
+  prep.spawnedCount = (prep.spawnedCount || 0) + 1;
+  console.log('[military] attack creep spawned: ' +
+    prep.spawnedCount + '/' + ATTACK_PREP_TARGET);
+
+  if (prep.spawnedCount >= ATTACK_PREP_TARGET) {
+    prep.completed = true;
+    prep.completedAt = Game.time;
+    console.log('[military] ATTACK FORCE READY — ' +
+      ATTACK_PREP_TARGET + ' creeps built');
+  }
+}
+
 function update(room, context) {
   const input = context || {};
   const memory = ensureRoomMemory(room.name);
@@ -170,6 +221,13 @@ function update(room, context) {
       safetyReserve
     ) * 0.8
   );
+
+  // Attack preparation: suspend all upgrades, divert to military
+  if (isPreparingAttack(room)) {
+    startAttackPrep(room);
+    upgradeRate = 0;
+    recovery = false;
+  }
 
   if (recovery || input.hostilesCount > 0) {
     upgradeRate = 0;
@@ -309,7 +367,10 @@ module.exports = {
   controllerEmergency: controllerEmergency,
   getControllerContainer: getControllerContainer,
   getState: getState,
+  isPreparingAttack: isPreparingAttack,
+  recordAttackCreepSpawned: recordAttackCreepSpawned,
   recordHarvest: recordHarvest,
   recordUpgrade: recordUpgrade,
+  startAttackPrep: startAttackPrep,
   update: update
 };

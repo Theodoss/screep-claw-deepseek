@@ -261,6 +261,35 @@ function buildGuardBody(energyCapacity) {
   return body;
 }
 
+function buildAttackBody(energyCapacity) {
+  // Offensive: TOUGH front for tanking, max ATTACK for DPS, MOVE for mobility.
+  // Budget split: ~5% TOUGH, ~45% ATTACK, ~50% MOVE
+  const body = [];
+
+  const baseMoveCost = 50;
+  const baseAttackCost = 80;
+  const baseToughCost = 10;
+
+  // Always have at least 1:1 ATTACK:MOVE and some TOUGH
+  const pairCost = baseAttackCost + baseMoveCost;
+  let pairs = Math.max(2, Math.floor(energyCapacity / pairCost));
+
+  // Reserve for TOUGH
+  const toughBudget = Math.floor(energyCapacity * 0.06);
+  const toughParts = Math.max(2, Math.floor(toughBudget / baseToughCost));
+
+  // Remaining for ATTACK+MOVE pairs
+  const remaining = energyCapacity - toughParts * baseToughCost;
+  pairs = Math.floor(remaining / pairCost);
+
+  // TOUGH first (goes to front)
+  for (let i = 0; i < toughParts; i++) body.push(TOUGH);
+  // ATTACK+MOVE alternating
+  for (let i = 0; i < pairs; i++) body.push(ATTACK, MOVE);
+
+  return body;
+}
+
 function buildHaulerBody(energyCapacity) {
   const body = [];
   const sets = Math.max(1, Math.min(4, Math.floor(energyCapacity / 150)));
@@ -574,6 +603,26 @@ function run(room, state) {
       populationPlan: populationPlan
     });
     if (spawnedMaintainer) return;
+  }
+
+  // Attack preparation: spawn big attack creeps before anything else
+  if (economy.isPreparingAttack(room)) {
+    const attackBody = buildAttackBody(room.energyCapacityAvailable);
+    const name = `attack-${room.name}-${spawn.name}-${Game.time}`;
+    const result = spawn.spawnCreep(attackBody, name, {
+      memory: { role: 'guard', home: room.name, attackCreep: true }
+    });
+    if (result === OK) {
+      console.log('[spawn] ' + spawn.name + ' spawning ' + name +
+        ' (attack prep, ' + attackBody.length + ' parts)');
+      economy.recordAttackCreepSpawned(room);
+      return;
+    }
+    // If we can't afford it, don't spawn anything else — save energy
+    if (result !== ERR_NOT_ENOUGH_ENERGY && result !== ERR_BUSY) {
+      console.log('[spawn:error] role=attack result=' + result);
+    }
+    return;
   }
 
   // Defense: hostiles present → spawn guard before support creeps
