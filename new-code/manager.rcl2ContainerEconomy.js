@@ -1,5 +1,6 @@
 const bootstrap = require('manager.rcl1Bootstrap');
 const economy = require('manager.economy');
+const population = require('manager.population');
 const support = require('role.support');
 
 const DISCOVERY_INTERVAL = 50;
@@ -91,10 +92,17 @@ function discoverSources(room, roomMemory) {
     ) || null;
     const actualPos = container ? serializePos(container.pos) : null;
     const plannedPos = plannedSite ? serializePos(plannedSite.pos) : null;
-    let suggestedPos = previous.suggestedContainerPos || null;
+    const plannerSource = roomMemory.planner &&
+      roomMemory.planner.sourcePlans
+      ? roomMemory.planner.sourcePlans[source.id]
+      : null;
+    let suggestedPos = plannerSource && plannerSource.containerPos
+      ? plannerSource.containerPos
+      : previous.suggestedContainerPos || null;
 
     if (!container && !plannedSite) {
-      suggestedPos = findSuggestedContainerPos(room, source, spawn);
+      suggestedPos = suggestedPos ||
+        findSuggestedContainerPos(room, source, spawn);
     } else {
       suggestedPos = null;
     }
@@ -214,14 +222,10 @@ function buildWorkerBody(energyCapacity, role, desiredWork) {
   const body = [];
 
   if (role === 'rcl1Upgrader') {
-    // Cap body cost at 75% of capacity so spawn can reliably produce
-    // the creep even with minor energy fluctuation. Without this cap,
-    // 100%-capacity bodies can fail to spawn, stalling upgrade throughput.
-    const capacityCap = Math.max(200, Math.floor(energyCapacity * 0.75));
     const affordableWork = Math.max(
       1,
       Math.floor(
-        (capacityCap - BODYPART_COST[CARRY] - BODYPART_COST[MOVE]) /
+        (energyCapacity - BODYPART_COST[CARRY] - BODYPART_COST[MOVE]) /
         BODYPART_COST[WORK]
       )
     );
@@ -344,6 +348,7 @@ function findMinerNeedingSpawn(state, miners, minerBody) {
     const sourceMiners = miners.filter(
       creep => creep.memory.sourceId === sourceEntry.sourceId
     );
+    if (sourceMiners.length >= 2) continue;
     const hasHealthyMiner = sourceMiners.some(
       creep =>
         creep.ticksToLive === undefined ||
@@ -356,7 +361,12 @@ function findMinerNeedingSpawn(state, miners, minerBody) {
   return null;
 }
 
-function needsHaulerReplacement(state, haulers, haulerBody) {
+function needsHaulerReplacement(
+  state,
+  haulers,
+  haulerBody,
+  requiredHaulers
+) {
   const longestRoute = state.readySources.reduce(
     (longest, sourceEntry) => Math.max(
       longest,
@@ -374,7 +384,7 @@ function needsHaulerReplacement(state, haulers, haulerBody) {
       creep.ticksToLive > replacementLead
   );
 
-  return healthyHaulers.length < Math.max(1, state.readySources.length);
+  return healthyHaulers.length < requiredHaulers;
 }
 
 function findSourceWithoutMiner(state, miners) {
@@ -401,6 +411,9 @@ function run(room, state) {
   });
   const emergencyRepair = support.hasEmergencyRepair(room);
   const generalRepair = support.hasGeneralRepair(room);
+  const towersMaintain = generalRepair
+    ? support.towersCanMaintain(room)
+    : true;
 
   updateMinerNames(state, miners);
 
@@ -408,7 +421,21 @@ function run(room, state) {
   const haulerBody = buildHaulerBody(room.energyCapacityAvailable);
   const missingMiner = findSourceWithoutMiner(state, miners);
   const minersHealthy = !missingMiner;
-  const requiredHaulers = Math.max(1, state.readySources.length);
+  const controllerLevel = room.controller ? room.controller.level : 2;
+  const sourceCount =
+    state.readySources.length + state.uncoveredSources.length;
+  const capacityPlan = population.getPlan(
+    controllerLevel,
+    {
+      readySourceCount: state.readySources.length,
+      sourceCount: sourceCount,
+      uncoveredSourceCount: state.uncoveredSources.length
+    }
+  );
+  const requiredHaulers = population.getRole(
+    capacityPlan,
+    'rcl2Hauler'
+  ).target;
   const haulersHealthy = haulers.length >= requiredHaulers;
   const economyState = economy.update(room, {
     constructionCount: constructionSites.length,
@@ -418,7 +445,45 @@ function run(room, state) {
     minersHealthy: minersHealthy,
     repairBacklog: emergencyRepair || generalRepair
   });
+  const controllerContainer = economy.getControllerContainer(room);
+  const requestedUpgradeWork = controllerContainer
+    ? economyState.upgraderWorkTarget || 0
+    : 0;
+  const populationPlan = population.getPlan(
+    controllerLevel,
+    {
+      constructionCount: constructionSites.length,
+      controllerEmergency: !!economyState.controllerEmergency,
+      emergencyRepair: emergencyRepair,
+      energyStarved: state.energyStarved,
+      generalRepair: generalRepair,
+      haulersHealthy: haulersHealthy,
+      hostilesCount: hostiles.length,
+      minersHealthy: minersHealthy,
+      noCreeps: creeps.length === 0,
+      readySourceCount: state.readySources.length,
+      selfHarvestMissing:
+        haulers.length === 0 && rcl1Harvesters.length === 0,
+      sourceCount: sourceCount,
+      towersCanMaintain: towersMaintain,
+      uncoveredSourceCount: state.uncoveredSources.length,
+      upgraderWorkTarget: requestedUpgradeWork
+    }
+  );
+  const fallbackHarvester = population.getRole(
+    populationPlan,
+    'rcl1Harvester'
+  );
+  const minerPolicy = population.getRole(populationPlan, 'rcl2Miner');
+  const haulerPolicy = population.getRole(populationPlan, 'rcl2Hauler');
+  const builderPolicy = population.getRole(populationPlan, 'rcl1Builder');
+  const guardPolicy = population.getRole(populationPlan, 'guard');
+  const minerLimit = minerPolicy.limit;
+  const haulerLimit = haulerPolicy.limit;
+  population.saveRoomState(room.name, populationPlan);
+
   state.economy = economyState;
+  state.population = populationPlan;
   state.recovery = economyState.recovery;
   state.mode = economyState.recovery ? 'rcl2-recovery' : state.mode;
   if (Memory.rooms[room.name] && Memory.rooms[room.name].containerEconomy) {
@@ -435,23 +500,27 @@ function run(room, state) {
     (haulers.length === 0 && rcl1Harvesters.length === 0)
   ) {
     const spawnedFallback = bootstrap.run(room, {
-      harvesterTarget: 1,
+      harvesterTarget: fallbackHarvester.target,
       sourceIds: state.uncoveredSources.map(entry => entry.sourceId),
-      maintainSupport: false
+      maintainSupport: false,
+      populationPlan: populationPlan
     });
     if (spawnedFallback) return;
   }
 
   let spawnBlocked = false;
 
-  if (missingMiner) {
+  if (missingMiner && miners.length < minerLimit) {
     const emergencyMinerBody = buildMinerBody(room.energyAvailable);
     const result = trySpawnMiner(spawn, room, missingMiner, emergencyMinerBody);
     if (result === OK) return;
     spawnBlocked = true;
   }
 
-  if (haulers.length < requiredHaulers) {
+  if (
+    haulers.length < requiredHaulers &&
+    haulers.length < haulerLimit
+  ) {
     const emergencyHaulerBody = buildHaulerBody(room.energyAvailable);
     const result = trySpawnHauler(spawn, room, emergencyHaulerBody);
     if (result === OK) return;
@@ -467,7 +536,15 @@ function run(room, state) {
     return;
   }
 
-  if (needsHaulerReplacement(state, haulers, haulerBody)) {
+  if (
+    haulers.length < haulerLimit &&
+    needsHaulerReplacement(
+      state,
+      haulers,
+      haulerBody,
+      requiredHaulers
+    )
+  ) {
     trySpawnHauler(spawn, room, haulerBody);
     return;
   }
@@ -477,15 +554,14 @@ function run(room, state) {
     miners,
     minerBody
   );
-  if (replacementMiner) {
+  if (replacementMiner && miners.length < minerLimit) {
     trySpawnMiner(spawn, room, replacementMiner, minerBody);
     return;
   }
 
-  const fallbackTarget = state.mode === 'rcl2-container-full' && haulers.length > 0
-    ? 0
-    : Math.max(1, state.uncoveredSources.length);
+  const fallbackTarget = fallbackHarvester.target;
   const fallbackSourceIds = state.uncoveredSources.map(entry => entry.sourceId);
+  const upgraderWorkTarget = populationPlan.upgraderWorkTarget;
 
   if (emergencyRepair) {
     const spawnedMaintainer = bootstrap.run(room, {
@@ -494,13 +570,17 @@ function run(room, state) {
       maintainSupport: true,
       builderTarget: 1,
       upgraderWorkTarget: 0,
-      bodyBuilder: buildWorkerBody
+      bodyBuilder: buildWorkerBody,
+      populationPlan: populationPlan
     });
     if (spawnedMaintainer) return;
   }
 
   // Defense: hostiles present → spawn guard before support creeps
-  if (hostiles.length > 0 && guards.length < 2) {
+  if (
+    hostiles.length > 0 &&
+    guards.length < guardPolicy.target
+  ) {
     const guardBody = buildGuardBody(room.energyCapacityAvailable);
     // Guard spawns like other creeps but with 'guard' role
     const name = `guard-${room.name}-${spawn.name}-${Game.time}`;
@@ -521,13 +601,10 @@ function run(room, state) {
     harvesterTarget: fallbackTarget,
     sourceIds: fallbackSourceIds,
     maintainSupport: true,
-    builderTarget:
-      constructionSites.length > 0 ||
-      (generalRepair && !support.towersCanMaintain(room))
-        ? 1
-        : 0,
-    upgraderWorkTarget: economyState.upgraderWorkTarget || 0,
-    bodyBuilder: buildWorkerBody
+    builderTarget: builderPolicy.target,
+    upgraderWorkTarget: upgraderWorkTarget,
+    bodyBuilder: buildWorkerBody,
+    populationPlan: populationPlan
   });
 }
 

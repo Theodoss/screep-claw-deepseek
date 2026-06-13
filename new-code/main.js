@@ -11,6 +11,8 @@ const intel = require('manager.intel');
 const errorReporter = require('core.errorReporter');
 const rcl1SourceSlots = require('manager.rcl1SourceSlots');
 const towerManager = require('manager.tower');
+const roomPlanner = require('planner.roomPlanner');
+const ROOM_PLANNER_ENABLED = true;
 
 const LEGACY_ROLES = {
   harvester: 'rcl1Harvester',
@@ -72,6 +74,17 @@ module.exports.loop = function () {
         module: 'manager.tower',
         room: roomName
       });
+    }
+
+    if (ROOM_PLANNER_ENABLED) {
+      try {
+        roomPlanner.run(room);
+      } catch (err) {
+        errorReporter.capture(err, {
+          module: 'planner.roomPlanner',
+          room: roomName
+        });
+      }
     }
 
     try {

@@ -86,10 +86,7 @@ function getReplacementRate(creeps) {
   let rate = 0;
 
   for (const creep of creeps) {
-    if (
-      creep.memory.role === 'rcl1Upgrader' ||
-      creep.memory.role === 'guard'
-    ) {
+    if (creep.memory.role === 'guard') {
       continue;
     }
 
@@ -153,9 +150,8 @@ function update(room, context) {
   const defenseReserve = input.hostilesCount > 0
     ? incomeRate
     : Math.min(0.5, incomeRate * 0.05);
-  const healthy = !input.energyStarved && input.haulersHealthy !== false && input.minersHealthy !== false;
   const safetyReserve = incomeRate > 0
-    ? Math.max(1, incomeRate * (healthy ? 0.05 : 0.1))
+    ? Math.max(1, incomeRate * 0.1)
     : 0;
   const emergency = controllerEmergency(room);
   const recovery = !!(
@@ -163,10 +159,6 @@ function update(room, context) {
     input.minersHealthy === false ||
     input.haulersHealthy === false
   );
-  // When energy stores are full, reduce the safety margin from 20% to 5%
-  // so more energy flows to upgrades instead of sitting idle.
-  const upgradeMultiplier =
-    room.energyAvailable >= room.energyCapacityAvailable ? 0.95 : 0.8;
   let upgradeRate = Math.max(
     0,
     (
@@ -176,7 +168,7 @@ function update(room, context) {
       repairReserve -
       defenseReserve -
       safetyReserve
-    ) * upgradeMultiplier
+    ) * 0.8
   );
 
   if (recovery || input.hostilesCount > 0) {

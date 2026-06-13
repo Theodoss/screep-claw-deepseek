@@ -1,6 +1,6 @@
 const economy = require('manager.economy');
 
-const TOWER_PEACE_RESERVE = 600;
+const TOWER_PEACE_RESERVE = 400;
 const roomWorkCache = {};
 
 function getRoomData(room) {
@@ -320,10 +320,10 @@ function runHarvesterWork(creep) {
 
 function runBuilderWork(creep) {
   if (runEmergencyController(creep)) return true;
-  if (repairEmergency(creep)) return true;
-  if (runConstruction(creep)) return true;
   if (fillSpawnOrExtensions(creep)) return true;
+  if (repairEmergency(creep)) return true;
   if (fillWartimeTower(creep)) return true;
+  if (runConstruction(creep)) return true;
   if (runGeneralRepair(creep)) return true;
   return runBudgetedUpgrade(creep);
 }

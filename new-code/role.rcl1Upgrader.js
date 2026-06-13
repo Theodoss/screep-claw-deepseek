@@ -49,11 +49,20 @@ module.exports = {
     }
 
     const controllerContainer = economy.getControllerContainer(creep.room);
-    if (
-      controllerContainer &&
-      !economyState.recovery &&
-      controllerContainer.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-    ) {
+    if (controllerContainer && !economyState.recovery) {
+      if (
+        controllerContainer.store.getUsedCapacity(RESOURCE_ENERGY) === 0
+      ) {
+        if (economy.controllerEmergency(creep.room)) {
+          creep.memory.task = 'harvest:controller-emergency';
+          acquireFallbackEnergy(creep);
+        } else {
+          creep.memory.task = 'idle:controller-container-empty';
+        }
+        return;
+      }
+
+      creep.memory.task = 'withdraw:controller-container';
       const result = creep.withdraw(
         controllerContainer,
         RESOURCE_ENERGY
@@ -66,8 +75,18 @@ module.exports = {
       return;
     }
 
-    if (economy.controllerEmergency(creep.room)) {
+    if (
+      economyState.recovery ||
+      !creep.room.controller ||
+      creep.room.controller.level < 2 ||
+      economy.controllerEmergency(creep.room)
+    ) {
+      creep.memory.task = economy.controllerEmergency(creep.room)
+        ? 'harvest:controller-emergency'
+        : 'harvest:recovery-fallback';
       acquireFallbackEnergy(creep);
+    } else {
+      creep.memory.task = 'idle:no-controller-container';
     }
   }
 };

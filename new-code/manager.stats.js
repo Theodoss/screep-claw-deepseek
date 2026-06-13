@@ -1,4 +1,5 @@
 const rcl1SourceSlots = require('manager.rcl1SourceSlots');
+const population = require('manager.population');
 
 module.exports = {
   collect: function () {
@@ -17,6 +18,9 @@ module.exports = {
     for (const roomName in Game.rooms) {
       const room = Game.rooms[roomName];
       const creeps = room.find(FIND_MY_CREEPS);
+      const constructionSiteCount =
+        room.find(FIND_MY_CONSTRUCTION_SITES).length;
+      const hostileCount = room.find(FIND_HOSTILE_CREEPS).length;
       const roleCounts = {};
       const roomMemory = Memory.rooms && Memory.rooms[roomName]
         ? Memory.rooms[roomName]
@@ -26,10 +30,17 @@ module.exports = {
       const sourceContainers = [];
       const slotStats = rcl1SourceSlots.getStats(room);
       const economyAccounting = roomMemory.economyAccounting || {};
+      const planner = roomMemory.planner || {};
+      let upgraderCount = 0;
+      let upgraderWork = 0;
 
       for (const creep of creeps) {
         const role = creep.memory.role || 'unknown';
         roleCounts[role] = (roleCounts[role] || 0) + 1;
+        if (role === 'rcl1Upgrader') {
+          upgraderCount++;
+          upgraderWork += creep.getActiveBodyparts(WORK);
+        }
       }
 
       for (const sourceId in sourceMemory) {
@@ -63,11 +74,58 @@ module.exports = {
 
       sources.sort((left, right) => left.sourceId.localeCompare(right.sourceId));
       sourceContainers.sort((left, right) => left.id.localeCompare(right.id));
+      const readySourceCount = sources.filter(
+        source => source.containerReady
+      ).length;
+      const controllerLevel = room.controller ? room.controller.level : 1;
+      const savedPopulationPolicy = roomMemory.populationPolicy || {};
+      const fallbackPlan = population.getPlan(controllerLevel, {
+        constructionCount: constructionSiteCount,
+        controllerEmergency:
+          !!economyAccounting.controllerEmergency,
+        energyStarved: !!(
+          roomMemory.containerEconomy &&
+          roomMemory.containerEconomy.energyStarved
+        ),
+        hostilesCount: hostileCount,
+        noCreeps: creeps.length === 0,
+        readySourceCount: readySourceCount,
+        sourceCount: sources.length,
+        sourceSlots: slotStats.totalSlots,
+        uncoveredSourceCount: sources.length - readySourceCount,
+        upgraderWorkTarget:
+          economyAccounting.upgraderWorkTarget || 0
+      });
+      const roleTargets = savedPopulationPolicy.targets || {};
+      const roleLimits = savedPopulationPolicy.limits || {};
+      const populationState = {};
+      const policyRoles = {};
+      for (const role in fallbackPlan.roles) policyRoles[role] = true;
+      for (const role in roleCounts) policyRoles[role] = true;
+
+      for (const role in policyRoles) {
+        const count = roleCounts[role] || 0;
+        const fallbackRole = population.getRole(fallbackPlan, role);
+        const target = roleTargets[role] === undefined
+          ? fallbackRole.target
+          : roleTargets[role];
+        const limit = roleLimits[role] === undefined
+          ? fallbackRole.limit
+          : roleLimits[role];
+
+        populationState[role] = {
+          count: count,
+          target: target,
+          limit: limit,
+          missing: Math.max(0, target - count),
+          excess: Math.max(0, count - limit)
+        };
+      }
 
       Memory.agent.rooms[roomName] = {
         energyAvailable: room.energyAvailable,
         energyCapacityAvailable: room.energyCapacityAvailable,
-        controllerLevel: room.controller ? room.controller.level : 0,
+        controllerLevel: controllerLevel,
         controllerProgress: room.controller ? room.controller.progress : 0,
         controllerProgressTotal: room.controller ? room.controller.progressTotal : 0,
         economyMode: roomMemory.containerEconomy
@@ -81,6 +139,13 @@ module.exports = {
           upgradeRate: economyAccounting.upgradeRate || 0,
           upgraderWorkTarget:
             economyAccounting.upgraderWorkTarget || 0,
+          upgraderCount: upgraderCount,
+          upgraderWork: upgraderWork,
+          excessUpgraderWork: Math.max(
+            0,
+            upgraderWork -
+              (economyAccounting.upgraderWorkTarget || 0)
+          ),
           upgradeCredits: economyAccounting.upgradeCredits || 0,
           recovery: !!economyAccounting.recovery,
           controllerEmergency:
@@ -89,13 +154,69 @@ module.exports = {
           totalUpgradeSpent:
             economyAccounting.totalUpgradeSpent || 0
         },
+        planner: {
+          version: planner.version || null,
+          enabled: planner.enabled !== false,
+          anchor: planner.anchor || null,
+          anchorReason: planner.anchorReason || null,
+          lastPlanned: planner.lastPlanned || null,
+          lastSiteStatus: planner.lastSiteStatus || null,
+          lastSite: planner.lastSite || null,
+          extensions: Array.isArray(planner.extensions)
+            ? planner.extensions.length
+            : 0,
+          roads:
+            planner.roads &&
+            Array.isArray(planner.roads.routeRoads) &&
+            Array.isArray(planner.roads.coreRoads)
+              ? planner.roads.routeRoads.length +
+                planner.roads.coreRoads.length
+              : 0,
+          routeRoads:
+            planner.roads && Array.isArray(planner.roads.routeRoads)
+              ? planner.roads.routeRoads.length
+              : 0,
+          coreRoads:
+            planner.roads && Array.isArray(planner.roads.coreRoads)
+              ? planner.roads.coreRoads.length
+              : 0,
+          towers: Array.isArray(planner.towers)
+            ? planner.towers.length
+            : 0
+        },
         rcl1SourceSlots: slotStats,
         roleCounts: roleCounts,
+        populationPolicy: {
+          version:
+            savedPopulationPolicy.version || fallbackPlan.version,
+          rcl: savedPopulationPolicy.rcl || fallbackPlan.rcl,
+          economyMode:
+            savedPopulationPolicy.economyMode ||
+            fallbackPlan.economyMode,
+          fallback:
+            savedPopulationPolicy.fallback || fallbackPlan.fallback,
+          fallbackActive:
+            savedPopulationPolicy.fallbackActive === undefined
+              ? fallbackPlan.fallbackActive
+              : savedPopulationPolicy.fallbackActive,
+          fallbackReasons:
+            savedPopulationPolicy.fallbackReasons ||
+            fallbackPlan.fallbackReasons,
+          spawnOrder:
+            savedPopulationPolicy.spawnOrder ||
+            fallbackPlan.spawnOrder,
+          upgraderWorkTarget:
+            savedPopulationPolicy.upgraderWorkTarget === undefined
+              ? fallbackPlan.upgraderWorkTarget
+              : savedPopulationPolicy.upgraderWorkTarget,
+          updatedAt: savedPopulationPolicy.updatedAt || null
+        },
+        population: populationState,
         myCreeps: creeps.length,
-        hostiles: room.find(FIND_HOSTILE_CREEPS).length,
+        hostiles: hostileCount,
         sources: sources,
         sourceContainers: sourceContainers,
-        constructionSites: room.find(FIND_MY_CONSTRUCTION_SITES).length,
+        constructionSites: constructionSiteCount,
         spawns: room.find(FIND_MY_SPAWNS).map(s => ({
           name: s.name,
           spawning: !!s.spawning,
