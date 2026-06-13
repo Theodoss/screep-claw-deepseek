@@ -125,9 +125,9 @@ function controllerEmergency(room) {
   );
 }
 
-// Attack preparation: two-phase military buildup at RCL4+.
-// Phase 1 (extensions): minimal RCL maintenance, prioritize building all extensions.
-// Phase 2 (attack): extensions full → spawn biggest possible attack creep.
+// Attack preparation: continuous small-wave harassment + extension building.
+// RCL3+: spawn small attack creeps (1T,2A,2M) continuously.
+// RCL4+: also build extensions while attacking.
 
 function getExtensionMax(rcl) {
   if (typeof CONTROLLER_STRUCTURES === 'undefined') return 60;
@@ -147,7 +147,7 @@ function getExtensionSiteCount(room) {
 }
 
 function isPreparingAttack(room) {
-  if (!room.controller || room.controller.level < 4) return false;
+  if (!room.controller || room.controller.level < 3) return false;
 
   const roomMemory = Memory.rooms && Memory.rooms[room.name]
     ? Memory.rooms[room.name]
@@ -159,14 +159,8 @@ function isPreparingAttack(room) {
 }
 
 function isAttackPhaseSpawn(room) {
-  // Phase 2: extensions are all built (or being built) → ready to spawn attack creeps
-  const rcl = room.controller ? room.controller.level : 4;
-  const maxExt = getExtensionMax(rcl);
-  const builtExt = getExtensionCount(room);
-  const siteExt = getExtensionSiteCount(room);
-
-  // Ready when all extensions exist (built or under construction)
-  return (builtExt + siteExt) >= maxExt;
+  // Always allow spawning attack creeps during prep
+  return true;
 }
 
 function startAttackPrep(room) {
@@ -175,19 +169,14 @@ function startAttackPrep(room) {
 
   const roomMemory = Memory.rooms[room.name];
   if (!roomMemory.attackPrep) {
-    const rcl = room.controller ? room.controller.level : 4;
-    const maxExt = getExtensionMax(rcl);
-    const builtExt = getExtensionCount(room);
+    const rcl = room.controller ? room.controller.level : 3;
     roomMemory.attackPrep = {
       startedAt: Game.time,
-      phase: 'extensions',
       spawnedCount: 0,
-      completed: false,
-      maxExtensions: maxExt,
-      builtExtensions: builtExt
+      completed: false
     };
     console.log('[military] attack prep started at RCL ' + rcl +
-      ' — phase 1: building extensions (' + builtExt + '/' + maxExt + ')');
+      ' — small-wave harassment');
   }
 }
 
@@ -198,12 +187,7 @@ function recordAttackCreepSpawned(room) {
 
   prep.spawnedCount = (prep.spawnedCount || 0) + 1;
   console.log('[military] attack creep spawned: ' +
-    prep.spawnedCount + ' built, ' + prep.bodySize + ' parts');
-
-  prep.completed = true;
-  prep.completedAt = Game.time;
-  console.log('[military] ATTACK FORCE READY — ' +
-    prep.spawnedCount + ' creep(s) built');
+    prep.spawnedCount + ' built');
 }
 
 function update(room, context) {
@@ -252,16 +236,10 @@ function update(room, context) {
     ) * 0.8
   );
 
-  // Attack preparation: phase 1 (extensions) → minimal upgrade; phase 2 (spawn) → zero upgrade
+  // Attack preparation: keep minimal upgrade, rest goes to attack creeps
   if (isPreparingAttack(room)) {
     startAttackPrep(room);
-    if (isAttackPhaseSpawn(room)) {
-      // Phase 2: extensions done, all energy to attack creeps
-      upgradeRate = 0;
-    } else {
-      // Phase 1: building extensions, keep minimal RCL maintenance
-      upgradeRate = 1;
-    }
+    upgradeRate = 1;
     recovery = false;
   }
 
