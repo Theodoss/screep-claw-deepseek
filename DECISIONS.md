@@ -59,3 +59,18 @@
 - **實作**: `manager.stats.js` 每 20 ticks 記錄總房間能量（spawn+ext+container+creep store），存在 `Memory.agent.energySnapshots[]`，保留 1200 ticks。巡迴時取最早和最晚 snapshot 計算每 1000 ticks 能量產出，與上輪比較。
 - **對應 SKILL.md 規則**: 巡迴流程第 2 步「檢查 1000-tick 能量收入」、劣化規則（降低 20% → 回滾檢討）
 - **教訓**: 時間序列指標比瞬間快照更能捕捉系統性衰退。
+
+---
+
+## D006 — Branch 隔離：sim 只讀不寫
+
+- **時間**: 2026-06-13
+- **原因**: 自動巡迴曾同時覆蓋 sim 和 claw-deepseek，破壞 branch 隔離。Theodos 手動維護 sim 作為穩定版，claw-deepseek 作為開發版。
+- **決策**:
+  1. 任何部署**只能推到 claw-deepseek**，絕不可動 sim。
+  2. `.env` 的 `SCREEPS_BRANCH` 永遠保持 `claw-deepseek`。
+  3. 巡迴開頭先 `list-branches` 檢查 activeWorld：
+     - 若 activeWorld 是 sim → pull sim 到 sim-code/ 當參考，但部署仍只推 claw-deepseek
+     - 若 activeWorld 是 claw-deepseek → 正常優化+部署
+- **對應 SKILL.md 規則**: 部署規則
+- **教訓**: 永遠先確認 active branch 再決定行為。改 `.env` 前要先問。
