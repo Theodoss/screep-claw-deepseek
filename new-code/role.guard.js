@@ -90,21 +90,23 @@ module.exports = {
 
     // ── Offensive mode: attacking another room ──
     if (targetRoom && creep.room.name !== targetRoom) {
-      const targetPos = military.targetPos;
-      if (targetPos && targetPos.roomName === targetRoom) {
-        creep.moveTo(
-          new RoomPosition(targetPos.x, targetPos.y, targetPos.roomName),
-          { visualizePathStyle: { stroke: '#ff0000' } }
-        );
-        creep.memory.task = 'move:to-target-pos';
-      } else {
-        moveToRoom(creep, targetRoom);
-      }
+      moveToRoom(creep, targetRoom);
       return;
     }
 
     // ── We are in the target room ──
     if (targetRoom && creep.room.name === targetRoom) {
+      // Priority 0: move to staging position if set
+      const targetPos = military.targetPos;
+      if (targetPos && targetPos.roomName === targetRoom &&
+          creep.pos.getRangeTo(targetPos.x, targetPos.y) > 3) {
+        creep.moveTo(targetPos.x, targetPos.y, {
+          visualizePathStyle: { stroke: '#ff0000' }
+        });
+        creep.memory.task = 'move:staging';
+        return;
+      }
+
       // Priority 1: kill enemy creeps
       if (findAndAttackHostile(creep)) return;
 
