@@ -262,27 +262,22 @@ function buildGuardBody(energyCapacity) {
 }
 
 function buildAttackBody(energyCapacity) {
-  // Offensive: TOUGH front for tanking, max ATTACK for DPS, MOVE for mobility.
-  // Budget split: ~5% TOUGH, ~45% ATTACK, ~50% MOVE
+  // Offensive: max ATTACK for DPS, TOUGH front for tanking, MOVE for mobility.
+  // Uses ALL available capacity for the biggest possible attack creep.
   const body = [];
+  const BASE_TOUGH = 10;
+  const BASE_ATTACK = 80;
+  const BASE_MOVE = 50;
 
-  const baseMoveCost = 50;
-  const baseAttackCost = 80;
-  const baseToughCost = 10;
+  // Reserve ~8% for TOUGH front line
+  const toughParts = Math.max(2, Math.floor(energyCapacity * 0.08 / BASE_TOUGH));
+  let remaining = energyCapacity - toughParts * BASE_TOUGH;
 
-  // Always have at least 1:1 ATTACK:MOVE and some TOUGH
-  const pairCost = baseAttackCost + baseMoveCost;
-  let pairs = Math.max(2, Math.floor(energyCapacity / pairCost));
+  // ATTACK+MOVE pairs with remaining budget
+  const pairCost = BASE_ATTACK + BASE_MOVE;
+  const pairs = Math.floor(remaining / pairCost);
 
-  // Reserve for TOUGH
-  const toughBudget = Math.floor(energyCapacity * 0.06);
-  const toughParts = Math.max(2, Math.floor(toughBudget / baseToughCost));
-
-  // Remaining for ATTACK+MOVE pairs
-  const remaining = energyCapacity - toughParts * baseToughCost;
-  pairs = Math.floor(remaining / pairCost);
-
-  // TOUGH first (goes to front)
+  // TOUGH first
   for (let i = 0; i < toughParts; i++) body.push(TOUGH);
   // ATTACK+MOVE alternating
   for (let i = 0; i < pairs; i++) body.push(ATTACK, MOVE);
@@ -605,23 +600,32 @@ function run(room, state) {
     if (spawnedMaintainer) return;
   }
 
-  // Attack preparation: spawn big attack creeps before anything else
-  if (economy.isPreparingAttack(room)) {
+  // Attack preparation — Phase 2 only: extensions full → spawn max attack creep
+  if (economy.isPreparingAttack(room) && economy.isAttackPhaseSpawn(room)) {
     const attackBody = buildAttackBody(room.energyCapacityAvailable);
     const name = `attack-${room.name}-${spawn.name}-${Game.time}`;
     const result = spawn.spawnCreep(attackBody, name, {
       memory: { role: 'guard', home: room.name, attackCreep: true }
     });
     if (result === OK) {
+      if (!Memory.rooms[room.name].attackPrep) {
+        Memory.rooms[room.name].attackPrep = {};
+      }
+      Memory.rooms[room.name].attackPrep.bodySize = attackBody.length;
+      Memory.rooms[room.name].attackPrep.bodyCost = attackBody.reduce(
+        (sum, part) => sum + (BODYPART_COST[part] || 0), 0
+      );
       console.log('[spawn] ' + spawn.name + ' spawning ' + name +
-        ' (attack prep, ' + attackBody.length + ' parts)');
+        ' (ATTACK FORCE, ' + attackBody.length + ' parts, ' +
+        Memory.rooms[room.name].attackPrep.bodyCost + 'e)');
       economy.recordAttackCreepSpawned(room);
       return;
     }
-    // If we can't afford it, don't spawn anything else — save energy
+    // Not enough energy — save energy for attack creep, skip lower-priority spawns
     if (result !== ERR_NOT_ENOUGH_ENERGY && result !== ERR_BUSY) {
       console.log('[spawn:error] role=attack result=' + result);
     }
+    // Return to save energy (miner/hauler already handled above)
     return;
   }
 

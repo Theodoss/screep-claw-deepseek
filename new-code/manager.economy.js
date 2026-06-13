@@ -125,9 +125,26 @@ function controllerEmergency(room) {
   );
 }
 
-// Attack preparation: when RCL hits 4+ and attack force not yet built,
-// suspend upgrades and divert all energy to attacking creeps.
-const ATTACK_PREP_TARGET = 2;
+// Attack preparation: two-phase military buildup at RCL4+.
+// Phase 1 (extensions): minimal RCL maintenance, prioritize building all extensions.
+// Phase 2 (attack): extensions full → spawn biggest possible attack creep.
+
+function getExtensionMax(rcl) {
+  if (typeof CONTROLLER_STRUCTURES === 'undefined') return 60;
+  return (CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION] || [])[rcl] || 0;
+}
+
+function getExtensionCount(room) {
+  return room.find(FIND_MY_STRUCTURES, {
+    filter: structure => structure.structureType === STRUCTURE_EXTENSION
+  }).length;
+}
+
+function getExtensionSiteCount(room) {
+  return room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: site => site.structureType === STRUCTURE_EXTENSION
+  }).length;
+}
 
 function isPreparingAttack(room) {
   if (!room.controller || room.controller.level < 4) return false;
@@ -138,9 +155,18 @@ function isPreparingAttack(room) {
   const prep = roomMemory.attackPrep || {};
 
   if (prep.completed) return false;
-  if ((prep.spawnedCount || 0) >= ATTACK_PREP_TARGET) return false;
-
   return true;
+}
+
+function isAttackPhaseSpawn(room) {
+  // Phase 2: extensions are all built (or being built) → ready to spawn attack creeps
+  const rcl = room.controller ? room.controller.level : 4;
+  const maxExt = getExtensionMax(rcl);
+  const builtExt = getExtensionCount(room);
+  const siteExt = getExtensionSiteCount(room);
+
+  // Ready when all extensions exist (built or under construction)
+  return (builtExt + siteExt) >= maxExt;
 }
 
 function startAttackPrep(room) {
@@ -149,13 +175,19 @@ function startAttackPrep(room) {
 
   const roomMemory = Memory.rooms[room.name];
   if (!roomMemory.attackPrep) {
+    const rcl = room.controller ? room.controller.level : 4;
+    const maxExt = getExtensionMax(rcl);
+    const builtExt = getExtensionCount(room);
     roomMemory.attackPrep = {
       startedAt: Game.time,
+      phase: 'extensions',
       spawnedCount: 0,
-      completed: false
+      completed: false,
+      maxExtensions: maxExt,
+      builtExtensions: builtExt
     };
-    console.log('[military] attack preparation started at RCL',
-      room.controller ? room.controller.level : '?');
+    console.log('[military] attack prep started at RCL ' + rcl +
+      ' — phase 1: building extensions (' + builtExt + '/' + maxExt + ')');
   }
 }
 
@@ -166,14 +198,12 @@ function recordAttackCreepSpawned(room) {
 
   prep.spawnedCount = (prep.spawnedCount || 0) + 1;
   console.log('[military] attack creep spawned: ' +
-    prep.spawnedCount + '/' + ATTACK_PREP_TARGET);
+    prep.spawnedCount + ' built, ' + prep.bodySize + ' parts');
 
-  if (prep.spawnedCount >= ATTACK_PREP_TARGET) {
-    prep.completed = true;
-    prep.completedAt = Game.time;
-    console.log('[military] ATTACK FORCE READY — ' +
-      ATTACK_PREP_TARGET + ' creeps built');
-  }
+  prep.completed = true;
+  prep.completedAt = Game.time;
+  console.log('[military] ATTACK FORCE READY — ' +
+    prep.spawnedCount + ' creep(s) built');
 }
 
 function update(room, context) {
@@ -222,10 +252,16 @@ function update(room, context) {
     ) * 0.8
   );
 
-  // Attack preparation: suspend all upgrades, divert to military
+  // Attack preparation: phase 1 (extensions) → minimal upgrade; phase 2 (spawn) → zero upgrade
   if (isPreparingAttack(room)) {
     startAttackPrep(room);
-    upgradeRate = 0;
+    if (isAttackPhaseSpawn(room)) {
+      // Phase 2: extensions done, all energy to attack creeps
+      upgradeRate = 0;
+    } else {
+      // Phase 1: building extensions, keep minimal RCL maintenance
+      upgradeRate = 1;
+    }
     recovery = false;
   }
 
@@ -367,6 +403,7 @@ module.exports = {
   controllerEmergency: controllerEmergency,
   getControllerContainer: getControllerContainer,
   getState: getState,
+  isAttackPhaseSpawn: isAttackPhaseSpawn,
   isPreparingAttack: isPreparingAttack,
   recordAttackCreepSpawned: recordAttackCreepSpawned,
   recordHarvest: recordHarvest,
