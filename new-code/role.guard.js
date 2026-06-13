@@ -90,7 +90,16 @@ module.exports = {
 
     // ── Offensive mode: attacking another room ──
     if (targetRoom && creep.room.name !== targetRoom) {
-      moveToRoom(creep, targetRoom);
+      const targetPos = military.targetPos;
+      if (targetPos && targetPos.roomName === targetRoom) {
+        creep.moveTo(
+          new RoomPosition(targetPos.x, targetPos.y, targetPos.roomName),
+          { visualizePathStyle: { stroke: '#ff0000' } }
+        );
+        creep.memory.task = 'move:to-target-pos';
+      } else {
+        moveToRoom(creep, targetRoom);
+      }
       return;
     }
 
