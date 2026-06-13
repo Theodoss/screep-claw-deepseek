@@ -263,7 +263,7 @@ function buildGuardBody(energyCapacity) {
 
 function buildHaulerBody(energyCapacity) {
   const body = [];
-  const sets = Math.max(1, Math.min(3, Math.floor(energyCapacity / 150)));
+  const sets = Math.max(1, Math.min(4, Math.floor(energyCapacity / 150)));
 
   for (let index = 0; index < sets; index++) {
     body.push(CARRY, CARRY, MOVE);
