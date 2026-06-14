@@ -14,18 +14,39 @@ function getBodyCost(body) {
 }
 
 function buildStaticUpgraderBody(energyCapacity, desiredWork) {
-  const body = [];
-  const affordableWork = Math.max(
-    1,
-    Math.floor(
-      (energyCapacity - BODYPART_COST[CARRY] - BODYPART_COST[MOVE]) /
-      BODYPART_COST[WORK]
-    )
-  );
-  const workParts = Math.min(48, affordableWork, desiredWork || 1);
+  // Find the (WORK, CARRY, MOVE) combination within budget that maximizes
+  // effective upgrade throughput. Key insight: each WORK part generates
+  // 1 fatigue/tick while upgrading, and each MOVE clears 2 fatigue/tick.
+  // The old [WORK×N, CARRY, MOVE] formula gave oversized WORK counts
+  // with only 1 MOVE, making the creep crawl after 5 ticks of upgrading.
+  // Now we balance to achieve zero net fatigue with adequate carry capacity
+  // so the upgrader spends ~80% of its time upgrading, not refilling.
+  const maxWork = Math.min(48, Math.max(1, desiredWork || 1));
+  let bestConfig = { w: 1, c: 1, m: 1, effective: 0 };
+  const REFILL_COST = 8; // Approximate ticks per refill trip (walk + withdraw)
 
-  for (let index = 0; index < workParts; index++) body.push(WORK);
-  body.push(CARRY, MOVE);
+  for (let w = maxWork; w >= 1; w--) {
+    for (let c = 1; c <= 16; c++) {
+      const m = Math.ceil((w + c) / 2);
+      const cost = w * BODYPART_COST[WORK] +
+        c * BODYPART_COST[CARRY] +
+        m * BODYPART_COST[MOVE];
+      if (cost > energyCapacity) continue;
+
+      const upgradeTicks = (c * CARRY_CAPACITY_PER_PART) / w;
+      const uptime = upgradeTicks / (upgradeTicks + REFILL_COST);
+      const effective = w * uptime;
+
+      if (effective > bestConfig.effective) {
+        bestConfig = { w, c, m, effective };
+      }
+    }
+  }
+
+  const body = [];
+  for (let i = 0; i < bestConfig.w; i++) body.push(WORK);
+  for (let i = 0; i < bestConfig.c; i++) body.push(CARRY);
+  for (let i = 0; i < bestConfig.m; i++) body.push(MOVE);
   return body;
 }
 
