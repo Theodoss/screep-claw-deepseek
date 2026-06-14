@@ -205,7 +205,7 @@ function update(room, context) {
     ? incomeRate
     : Math.min(0.5, incomeRate * 0.05);
   const safetyReserve = incomeRate > 0
-    ? Math.max(1, incomeRate * 0.1)
+    ? (storedEnergy > 5000 ? 0 : storedEnergy > 2000 ? Math.max(0.5, incomeRate * 0.05) : Math.max(1, incomeRate * 0.1))
     : 0;
   const emergency = controllerEmergency(room);
   const recovery = !!(
