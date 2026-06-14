@@ -282,7 +282,7 @@ function run(room, options) {
   }
 
   if (
-    upgraders.count < upgraderPolicy.limit &&
+    upgraders.count < upgraderPolicy.limit + 1 &&
     upgraders.healthyWork < upgraderWorkTarget
   ) {
     trySpawn(
