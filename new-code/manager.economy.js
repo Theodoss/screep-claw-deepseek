@@ -222,7 +222,7 @@ function update(room, context) {
       repairReserve -
       defenseReserve -
       safetyReserve
-    ) * 0.85
+    ) * 0.8
   );
 
   if (recovery || input.hostilesCount > 0) {
