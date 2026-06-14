@@ -6,13 +6,18 @@ const roleRcl1Builder = require('role.rcl1Builder');
 const roleRcl2Miner = require('role.rcl2Miner');
 const roleRcl2Hauler = require('role.rcl2Hauler');
 const roleGuard = require('role.guard');
+const roleSquadMelee = require('role.squadMelee');
+const roleSquadHealer = require('role.squadHealer');
+const roleSquadRanged = require('role.squadRanged');
+const military = require('manager.military');
 const stats = require('manager.stats');
 const intel = require('manager.intel');
 const errorReporter = require('core.errorReporter');
 const rcl1SourceSlots = require('manager.rcl1SourceSlots');
 const towerManager = require('manager.tower');
 const roomPlanner = require('planner.roomPlanner');
-const ROOM_PLANNER_ENABLED = true;
+const ROOM_PLANNER_ENABLED = false;
+const ROOM_PLANNER_ACTIVATION_VERSION = 1;
 
 const LEGACY_ROLES = {
   harvester: 'rcl1Harvester',
@@ -26,7 +31,10 @@ const ROLE_MODULES = {
   rcl1Builder: roleRcl1Builder,
   rcl2Miner: roleRcl2Miner,
   rcl2Hauler: roleRcl2Hauler,
-  guard: roleGuard
+  guard: roleGuard,
+  squadMelee: roleSquadMelee,
+  squadHealer: roleSquadHealer,
+  squadRanged: roleSquadRanged
 };
 
 function runBootstrapFallback(room) {
@@ -40,7 +48,34 @@ function runBootstrapFallback(room) {
   }
 }
 
+function activateRoomPlanner(roomName) {
+  if (!Memory.rooms) Memory.rooms = {};
+  if (!Memory.rooms[roomName]) Memory.rooms[roomName] = {};
+
+  const roomMemory = Memory.rooms[roomName];
+  if (
+    roomMemory.plannerActivationVersion ===
+    ROOM_PLANNER_ACTIVATION_VERSION
+  ) {
+    return;
+  }
+  if (!roomMemory.planner) roomMemory.planner = {};
+
+  roomMemory.planner.enabled = true;
+  roomMemory.planner.forceReplan = true;
+  roomMemory.plannerActivationVersion =
+    ROOM_PLANNER_ACTIVATION_VERSION;
+}
+
 module.exports.loop = function () {
+  try {
+    military.update();
+  } catch (err) {
+    errorReporter.capture(err, {
+      module: 'manager.military.update'
+    });
+  }
+
   // 1. 清掉已死亡 creep 的 Memory，避免 Memory 越來越髒
   for (const name in Memory.creeps) {
     if (!Game.creeps[name]) {
@@ -78,6 +113,7 @@ module.exports.loop = function () {
 
     if (ROOM_PLANNER_ENABLED) {
       try {
+        activateRoomPlanner(roomName);
         roomPlanner.run(room);
       } catch (err) {
         errorReporter.capture(err, {
@@ -111,6 +147,15 @@ module.exports.loop = function () {
         room: roomName
       });
       runBootstrapFallback(room);
+    }
+
+    try {
+      military.trySpawn(room);
+    } catch (err) {
+      errorReporter.capture(err, {
+        module: 'manager.military.trySpawn',
+        room: roomName
+      });
     }
   }
 

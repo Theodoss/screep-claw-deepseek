@@ -1,3 +1,4 @@
+const bodyPolicy = require('body.policy');
 const rcl1SourceSlots = require('manager.rcl1SourceSlots');
 const population = require('manager.population');
 
@@ -33,6 +34,8 @@ module.exports = {
       const planner = roomMemory.planner || {};
       let upgraderCount = 0;
       let upgraderWork = 0;
+      let haulerCount = 0;
+      let haulerCarryParts = 0;
 
       for (const creep of creeps) {
         const role = creep.memory.role || 'unknown';
@@ -40,6 +43,10 @@ module.exports = {
         if (role === 'rcl1Upgrader') {
           upgraderCount++;
           upgraderWork += creep.getActiveBodyparts(WORK);
+        }
+        if (role === 'rcl2Hauler') {
+          haulerCount++;
+          haulerCarryParts += creep.getActiveBodyparts(CARRY);
         }
       }
 
@@ -79,6 +86,20 @@ module.exports = {
       ).length;
       const controllerLevel = room.controller ? room.controller.level : 1;
       const savedPopulationPolicy = roomMemory.populationPolicy || {};
+      const savedHaulerPlan = roomMemory.containerEconomy &&
+        roomMemory.containerEconomy.haulerPlan
+        ? roomMemory.containerEconomy.haulerPlan
+        : {};
+      const plannedUpgraderBody =
+        (economyAccounting.upgraderWorkTarget || 0) > 0
+          ? bodyPolicy.buildStaticUpgraderBody(
+            room.energyCapacityAvailable,
+            economyAccounting.upgraderWorkTarget
+          )
+          : [];
+      const plannedUpgraderWork = plannedUpgraderBody.filter(
+        part => part === WORK
+      ).length;
       const fallbackPlan = population.getPlan(controllerLevel, {
         constructionCount: constructionSiteCount,
         controllerEmergency:
@@ -135,10 +156,22 @@ module.exports = {
           shortIncomeRate: economyAccounting.shortIncomeRate || 0,
           longIncomeRate: economyAccounting.longIncomeRate || 0,
           incomeRate: economyAccounting.incomeRate || 0,
+          storedEnergy: economyAccounting.storedEnergy || 0,
+          shortNetEnergyRate:
+            economyAccounting.shortNetEnergyRate || 0,
+          longNetEnergyRate:
+            economyAccounting.longNetEnergyRate || 0,
+          shortConsumptionRate:
+            economyAccounting.shortConsumptionRate || 0,
+          longConsumptionRate:
+            economyAccounting.longConsumptionRate || 0,
           replacementRate: economyAccounting.replacementRate || 0,
           upgradeRate: economyAccounting.upgradeRate || 0,
           upgraderWorkTarget:
             economyAccounting.upgraderWorkTarget || 0,
+          plannedUpgraderWork: plannedUpgraderWork,
+          plannedUpgraderBodyCost:
+            bodyPolicy.getBodyCost(plannedUpgraderBody),
           upgraderCount: upgraderCount,
           upgraderWork: upgraderWork,
           excessUpgraderWork: Math.max(
@@ -154,11 +187,21 @@ module.exports = {
           totalUpgradeSpent:
             economyAccounting.totalUpgradeSpent || 0
         },
+        logistics: {
+          haulerCount: haulerCount,
+          haulerCarryParts: haulerCarryParts,
+          haulerTargetCount: savedHaulerPlan.targetCount || 0,
+          requiredCarryParts: savedHaulerPlan.requiredCarryParts || 0,
+          targetCarryParts: savedHaulerPlan.targetCarryParts || 0,
+          plannedBodyCarryParts: savedHaulerPlan.bodyCarryParts || 0,
+          plannedBodyCost: savedHaulerPlan.bodyCost || 0
+        },
         planner: {
           version: planner.version || null,
           enabled: planner.enabled !== false,
           anchor: planner.anchor || null,
           anchorReason: planner.anchorReason || null,
+          roadStrategy: planner.roadStrategy || null,
           lastPlanned: planner.lastPlanned || null,
           lastSiteStatus: planner.lastSiteStatus || null,
           lastSite: planner.lastSite || null,

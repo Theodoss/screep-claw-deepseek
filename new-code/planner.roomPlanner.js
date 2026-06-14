@@ -1,4 +1,4 @@
-const VERSION = 2;
+const VERSION = 3;
 const SITE_INTERVAL = 25;
 const MAX_ACTIVE_SITES = 3;
 const ANCHOR_MIN_EDGE_RANGE = 8;
@@ -802,6 +802,48 @@ function chooseAdjacentPosition(
   return candidates[0] || null;
 }
 
+function chooseAdjacentPositionByTargets(
+  scan,
+  target,
+  targets,
+  used,
+  structureType
+) {
+  const candidates = [];
+
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+
+      const candidate = pos(
+        target.pos.x + dx,
+        target.pos.y + dy,
+        scan.room.name
+      );
+      if (used && used[posKey(candidate)]) continue;
+      if (!isOpenTile(scan, candidate.x, candidate.y, structureType)) {
+        continue;
+      }
+      candidates.push(candidate);
+    }
+  }
+
+  candidates.sort((left, right) => {
+    const leftCost = targets.reduce(
+      (total, routeTarget) => total + getRange(left, routeTarget),
+      0
+    );
+    const rightCost = targets.reduce(
+      (total, routeTarget) => total + getRange(right, routeTarget),
+      0
+    );
+    return leftCost - rightCost ||
+      Number(isSwamp(scan.terrain, left.x, left.y)) -
+        Number(isSwamp(scan.terrain, right.x, right.y));
+  });
+  return candidates[0] || null;
+}
+
 function addPathRoads(roads, roadKeys, path, excluded) {
   for (const step of path) {
     const key = posKey(step);
@@ -826,33 +868,49 @@ function searchRoadPath(scan, origin, target, range, plannedBuildings) {
   setMatrixCost(matrix, origin.x, origin.y, 1);
 
   for (const source of scan.sources) {
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        setMatrixCost(
-          matrix,
-          source.pos.x + dx,
-          source.pos.y + dy,
-          255
-        );
+    const routeUsesSource =
+      getRange(origin, source.pos) <= 1 ||
+      getRange(target, source.pos) <= 1;
+    if (!routeUsesSource) {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          setMatrixCost(
+            matrix,
+            source.pos.x + dx,
+            source.pos.y + dy,
+            255
+          );
+        }
       }
     }
+    setMatrixCost(matrix, source.pos.x, source.pos.y, 255);
   }
   setMatrixCost(matrix, target.x, target.y, 1);
 
   if (scan.controller) {
-    for (let dx = -2; dx <= 2; dx++) {
-      for (let dy = -2; dy <= 2; dy++) {
-        setMatrixCost(
-          matrix,
-          scan.controller.pos.x + dx,
-          scan.controller.pos.y + dy,
-          255
-        );
+    const routeUsesController =
+      getRange(origin, scan.controller.pos) <= 3 ||
+      getRange(target, scan.controller.pos) <= 3;
+    if (!routeUsesController) {
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          setMatrixCost(
+            matrix,
+            scan.controller.pos.x + dx,
+            scan.controller.pos.y + dy,
+            255
+          );
+        }
       }
     }
-    if (getRange(target, scan.controller.pos) <= 3) {
-      setMatrixCost(matrix, target.x, target.y, 1);
-    }
+    setMatrixCost(
+      matrix,
+      scan.controller.pos.x,
+      scan.controller.pos.y,
+      255
+    );
+    setMatrixCost(matrix, origin.x, origin.y, 1);
+    setMatrixCost(matrix, target.x, target.y, 1);
   }
 
   const result = PathFinder.search(
@@ -933,9 +991,30 @@ function chooseControllerSupport(scan, anchor, used) {
       candidates.push(candidate);
     }
   }
-  candidates.sort((left, right) =>
-    getRange(left, anchor) - getRange(right, anchor)
-  );
+  const earlyLogistics = scan.controller.level < 4;
+  candidates.sort((left, right) => {
+    if (!earlyLogistics) {
+      return getRange(left, anchor) - getRange(right, anchor);
+    }
+
+    const leftSourceRange = scan.sources.length > 0
+      ? Math.min.apply(
+        null,
+        scan.sources.map(source => getRange(left, source.pos))
+      )
+      : 0;
+    const rightSourceRange = scan.sources.length > 0
+      ? Math.min.apply(
+        null,
+        scan.sources.map(source => getRange(right, source.pos))
+      )
+      : 0;
+    const leftSpawnRange = scan.spawn ? getRange(left, scan.spawn.pos) : 0;
+    const rightSpawnRange = scan.spawn ? getRange(right, scan.spawn.pos) : 0;
+
+    return leftSourceRange * 2 + leftSpawnRange -
+      (rightSourceRange * 2 + rightSpawnRange);
+  });
 
   const container = controllerContainerObject
     ? pos(
@@ -956,42 +1035,62 @@ function chooseControllerSupport(scan, anchor, used) {
   return { container: container, link: link };
 }
 
+function getRoadStrategy(rcl) {
+  return rcl >= 4 ? 'storage-hub' : 'early-logistics';
+}
+
+function findControllerRouteSource(scan, controllerTarget) {
+  if (!controllerTarget || scan.sources.length === 0) return null;
+
+  let selected = scan.sources[0];
+  for (const source of scan.sources) {
+    if (
+      getRange(source.pos, controllerTarget) <
+      getRange(selected.pos, controllerTarget)
+    ) {
+      selected = source;
+    }
+  }
+  return selected;
+}
+
 function planRoadsWithScan(scan, anchor, used, coreRoads) {
+  const rcl = scan.controller ? scan.controller.level : 0;
+  const roadStrategy = getRoadStrategy(rcl);
   const routeRoads = [];
   const routeRoadKeys = {};
   const sourcePlans = {};
-  const excluded = Object.assign({}, used);
-  const controllerSupport = chooseControllerSupport(scan, anchor, used);
-
-  if (scan.spawn) {
-    addPathRoads(
-      routeRoads,
-      routeRoadKeys,
-      searchRoadPath(scan, anchor, scan.spawn.pos, 1, used),
-      excluded
-    );
+  const excluded = roadStrategy === 'storage-hub'
+    ? Object.assign({}, used)
+    : {};
+  const supportUsed = roadStrategy === 'storage-hub' ? used : {};
+  const controllerSupport = chooseControllerSupport(
+    scan,
+    anchor,
+    supportUsed
+  );
+  if (roadStrategy === 'early-logistics') {
+    if (controllerSupport.container) {
+      used[posKey(controllerSupport.container)] = true;
+    }
+    if (controllerSupport.link) {
+      used[posKey(controllerSupport.link)] = true;
+    }
   }
-
-  if (scan.controller) {
-    const controllerTarget = controllerSupport.container ||
-      pos(
+  const controllerTarget = controllerSupport.container ||
+    (scan.controller
+      ? pos(
         scan.controller.pos.x,
         scan.controller.pos.y,
         scan.room.name
-      );
-    addPathRoads(
-      routeRoads,
-      routeRoadKeys,
-      searchRoadPath(
-        scan,
-        anchor,
-        controllerTarget,
-        controllerSupport.container ? 1 : 3,
-        used
-      ),
-      excluded
-    );
+      )
+      : null);
+  if (controllerSupport.container) {
+    excluded[posKey(controllerSupport.container)] = true;
   }
+  const controllerRouteSource = roadStrategy === 'early-logistics'
+    ? findControllerRouteSource(scan, controllerTarget)
+    : null;
 
   for (const source of scan.sources) {
     const existingContainer = scan.structures.find(structure =>
@@ -1011,27 +1110,45 @@ function planRoadsWithScan(scan, anchor, used, coreRoads) {
       getRange(site.pos, source.pos) === 2
     );
     const containerObject = existingContainer || existingContainerSite;
+    const earlyTargets = [];
+    if (scan.spawn) earlyTargets.push(scan.spawn.pos);
+    if (
+      controllerRouteSource &&
+      source.id === controllerRouteSource.id &&
+      controllerTarget
+    ) {
+      earlyTargets.push(controllerTarget);
+    }
     const containerPos = containerObject
       ? pos(
         containerObject.pos.x,
         containerObject.pos.y,
         scan.room.name
       )
-      : chooseAdjacentPosition(
-        scan,
-        source,
-        anchor,
-        1,
-        1,
-        used,
-        STRUCTURE_CONTAINER
+      : (
+        roadStrategy === 'early-logistics' && earlyTargets.length > 0
+          ? chooseAdjacentPositionByTargets(
+            scan,
+            source,
+            earlyTargets,
+            supportUsed,
+            STRUCTURE_CONTAINER
+          )
+          : chooseAdjacentPosition(
+            scan,
+            source,
+            anchor,
+            1,
+            1,
+            supportUsed,
+            STRUCTURE_CONTAINER
+          )
       );
     if (!containerPos) continue;
 
+    supportUsed[posKey(containerPos)] = true;
     used[posKey(containerPos)] = true;
     excluded[posKey(containerPos)] = true;
-    const roadPath = searchRoadPath(scan, anchor, containerPos, 1, used);
-    addPathRoads(routeRoads, routeRoadKeys, roadPath, excluded);
 
     const sourceLinkObject = existingLink || existingLinkSite;
     const sourceLink = sourceLinkObject
@@ -1046,10 +1163,11 @@ function planRoadsWithScan(scan, anchor, used, coreRoads) {
         anchor,
         2,
         2,
-        used,
+        supportUsed,
         STRUCTURE_LINK
       );
-    if (sourceLink && !used[posKey(sourceLink)]) {
+    if (sourceLink && !supportUsed[posKey(sourceLink)]) {
+      supportUsed[posKey(sourceLink)] = true;
       used[posKey(sourceLink)] = true;
     }
 
@@ -1057,10 +1175,83 @@ function planRoadsWithScan(scan, anchor, used, coreRoads) {
       minerPos: containerPos,
       containerPos: containerPos,
       linkPos: sourceLink,
-      roadPath: roadPath.map(step =>
-        pos(step.x, step.y, step.roomName)
-      )
+      roadPath: []
     };
+  }
+
+  const plannedBuildings = roadStrategy === 'storage-hub' ? used : {};
+  if (
+    roadStrategy === 'early-logistics' &&
+    controllerRouteSource &&
+    controllerTarget &&
+    sourcePlans[controllerRouteSource.id]
+  ) {
+    const path = searchRoadPath(
+      scan,
+      sourcePlans[controllerRouteSource.id].containerPos,
+      controllerTarget,
+      controllerSupport.container ? 1 : 3,
+      plannedBuildings
+    );
+    addPathRoads(routeRoads, routeRoadKeys, path, excluded);
+    sourcePlans[controllerRouteSource.id].roadPath.push.apply(
+      sourcePlans[controllerRouteSource.id].roadPath,
+      path.map(step => pos(step.x, step.y, step.roomName))
+    );
+  }
+
+  if (roadStrategy === 'early-logistics' && scan.spawn) {
+    for (const source of scan.sources) {
+      const sourcePlan = sourcePlans[source.id];
+      if (!sourcePlan) continue;
+
+      const path = searchRoadPath(
+        scan,
+        sourcePlan.containerPos,
+        scan.spawn.pos,
+        1,
+        plannedBuildings
+      );
+      addPathRoads(routeRoads, routeRoadKeys, path, excluded);
+      sourcePlan.roadPath.push.apply(
+        sourcePlan.roadPath,
+        path.map(step => pos(step.x, step.y, step.roomName))
+      );
+    }
+  }
+
+  if (roadStrategy === 'storage-hub') {
+    for (const source of scan.sources) {
+      const sourcePlan = sourcePlans[source.id];
+      if (!sourcePlan) continue;
+
+      const path = searchRoadPath(
+        scan,
+        sourcePlan.containerPos,
+        anchor,
+        1,
+        plannedBuildings
+      );
+      addPathRoads(routeRoads, routeRoadKeys, path, excluded);
+      sourcePlan.roadPath = path.map(step =>
+        pos(step.x, step.y, step.roomName)
+      );
+    }
+
+    if (controllerTarget) {
+      addPathRoads(
+        routeRoads,
+        routeRoadKeys,
+        searchRoadPath(
+          scan,
+          controllerTarget,
+          anchor,
+          1,
+          plannedBuildings
+        ),
+        excluded
+      );
+    }
   }
 
   let mineralPlan = null;
@@ -1089,12 +1280,15 @@ function planRoadsWithScan(scan, anchor, used, coreRoads) {
     }
   }
 
-  const plannedCoreRoads = coreRoads.filter(road => {
-    const key = posKey(road);
-    return !excluded[key] && !used[key] && !routeRoadKeys[key];
-  });
+  const plannedCoreRoads = roadStrategy === 'storage-hub'
+    ? coreRoads.filter(road => {
+      const key = posKey(road);
+      return !excluded[key] && !used[key] && !routeRoadKeys[key];
+    })
+    : [];
 
   return {
+    strategy: roadStrategy,
     roads: {
       routeRoads: routeRoads,
       coreRoads: plannedCoreRoads,
@@ -1148,6 +1342,7 @@ function buildPlan(room, providedScan) {
     core: corePlan.core,
     extensions: extensions,
     roads: roadsPlan.roads,
+    roadStrategy: roadsPlan.strategy,
     bootstrapRoads: roadsPlan.bootstrapRoads,
     towers: corePlan.towers,
     labs: corePlan.labs,
@@ -1186,22 +1381,24 @@ function getPlacementCandidates(room, plan) {
       addCandidate(candidates, STRUCTURE_TOWER, tower, 10);
     }
   }
-  if (rcl >= 4) {
-    addCandidate(candidates, STRUCTURE_STORAGE, plan.core.storage, 5);
+  if (rcl >= 2) {
     for (const sourceId in plan.sourcePlans || {}) {
       addCandidate(
         candidates,
         STRUCTURE_CONTAINER,
         plan.sourcePlans[sourceId].containerPos,
-        15
+        5
       );
     }
     addCandidate(
       candidates,
       STRUCTURE_CONTAINER,
       plan.controllerPlan && plan.controllerPlan.containerPos,
-      16
+      6
     );
+  }
+  if (rcl >= 4) {
+    addCandidate(candidates, STRUCTURE_STORAGE, plan.core.storage, 4);
   }
   if (rcl >= 5) {
     addCandidate(candidates, STRUCTURE_LINK, plan.core.link, 8);
@@ -1257,8 +1454,14 @@ function getPlacementCandidates(room, plan) {
   const plannedRouteRoads = rcl <= 1
     ? routeRoads.slice(0, 12)
     : routeRoads;
-  for (const road of plannedRouteRoads) {
-    addCandidate(candidates, STRUCTURE_ROAD, road, rcl <= 1 ? 40 : 50);
+  const routePriority = rcl === 3 ? 20 : (rcl <= 1 ? 40 : 50);
+  for (let index = 0; index < plannedRouteRoads.length; index++) {
+    addCandidate(
+      candidates,
+      STRUCTURE_ROAD,
+      plannedRouteRoads[index],
+      routePriority + index / 10000
+    );
   }
   if (rcl >= 4) {
     for (const road of coreRoads) {
@@ -1409,6 +1612,12 @@ function needsPlan(room, plannerMemory, scan) {
   if (plannerMemory.forceReplan) return true;
   if (plannerMemory.version !== VERSION) return true;
   if (
+    plannerMemory.roadStrategy !==
+    getRoadStrategy(room.controller ? room.controller.level : 0)
+  ) {
+    return true;
+  }
+  if (
     !plannerMemory.anchor ||
     !plannerMemory.core ||
     !Array.isArray(plannerMemory.extensions) ||
@@ -1443,6 +1652,8 @@ function run(room) {
   const basicPlanMissing =
     plannerMemory.forceReplan ||
     plannerMemory.version !== VERSION ||
+    plannerMemory.roadStrategy !==
+      getRoadStrategy(room.controller ? room.controller.level : 0) ||
     !plannerMemory.anchor ||
     !plannerMemory.core;
   const shouldValidatePlan =

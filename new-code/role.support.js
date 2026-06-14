@@ -1,6 +1,7 @@
 const economy = require('manager.economy');
+const repairPolicy = require('repair.policy');
 
-const TOWER_PEACE_RESERVE = 600;
+const TOWER_PEACE_RESERVE = 800;
 const roomWorkCache = {};
 
 function getRoomData(room) {
@@ -20,14 +21,6 @@ function getRoomData(room) {
 
   roomWorkCache[room.name] = data;
   return data;
-}
-
-function canRepairStructure(structure) {
-  return !!(
-    structure.my ||
-    structure.structureType === STRUCTURE_ROAD ||
-    structure.structureType === STRUCTURE_CONTAINER
-  );
 }
 
 function transferEnergy(creep, target) {
@@ -125,41 +118,6 @@ function fillWartimeTower(creep) {
   return true;
 }
 
-function isEmergencyRepairTarget(structure) {
-  if (!canRepairStructure(structure)) return false;
-  if (!structure.hitsMax || structure.hits >= structure.hitsMax) return false;
-
-  if (
-    structure.structureType === STRUCTURE_SPAWN ||
-    structure.structureType === STRUCTURE_TOWER
-  ) {
-    return structure.hits < structure.hitsMax * 0.5;
-  }
-
-  if (structure.structureType === STRUCTURE_CONTAINER) {
-    return structure.hits < Math.min(25000, structure.hitsMax * 0.2);
-  }
-
-  return false;
-}
-
-function isGeneralRepairTarget(structure) {
-  if (!canRepairStructure(structure)) return false;
-  if (!structure.hitsMax || structure.hits >= structure.hitsMax) return false;
-  if (structure.structureType === STRUCTURE_WALL) return false;
-  if (structure.structureType === STRUCTURE_RAMPART) {
-    return structure.hits < 10000;
-  }
-  if (structure.structureType === STRUCTURE_ROAD) {
-    return structure.hits < structure.hitsMax * 0.6;
-  }
-  if (structure.structureType === STRUCTURE_CONTAINER) {
-    return structure.hits < structure.hitsMax * 0.8;
-  }
-
-  return structure.hits < structure.hitsMax * 0.8;
-}
-
 function selectLowestHitsRatio(creep, structures) {
   if (structures.length === 0) return null;
 
@@ -183,24 +141,28 @@ function selectLowestHitsRatio(creep, structures) {
 
 function getEmergencyRepairTarget(room, creep) {
   const structures = getRoomData(room).structures.filter(
-    isEmergencyRepairTarget
+    repairPolicy.isEmergencyRepairTarget
   );
   return selectLowestHitsRatio(creep, structures);
 }
 
 function getGeneralRepairTarget(room, creep) {
   const structures = getRoomData(room).structures.filter(
-    isGeneralRepairTarget
+    repairPolicy.isGeneralRepairTarget
   );
   return selectLowestHitsRatio(creep, structures);
 }
 
 function hasEmergencyRepair(room) {
-  return getRoomData(room).structures.some(isEmergencyRepairTarget);
+  return getRoomData(room).structures.some(
+    repairPolicy.isEmergencyRepairTarget
+  );
 }
 
 function hasGeneralRepair(room) {
-  return getRoomData(room).structures.some(isGeneralRepairTarget);
+  return getRoomData(room).structures.some(
+    repairPolicy.isGeneralRepairTarget
+  );
 }
 
 function towersCanMaintain(room) {

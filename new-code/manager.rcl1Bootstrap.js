@@ -163,6 +163,7 @@ function run(room, options) {
   const populationPlan = settings.populationPlan || population.getPlan(
     room.controller ? room.controller.level : 1,
     {
+      roomName: room.name,
       bootstrapEconomy:
         !!room.controller &&
         room.controller.level >= 2 &&

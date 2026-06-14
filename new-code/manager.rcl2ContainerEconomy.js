@@ -1,10 +1,15 @@
 const bootstrap = require('manager.rcl1Bootstrap');
+const bodyPolicy = require('body.policy');
 const economy = require('manager.economy');
 const population = require('manager.population');
 const support = require('role.support');
 
 const DISCOVERY_INTERVAL = 50;
 const ENERGY_STARVATION_TICKS = 50;
+const HAULER_BACKLOG_TICKS = 50;
+const HAULER_LOW_IDLE_TICKS = 100;
+const SOURCE_BACKLOG_ENERGY = 1000;
+const SOURCE_LOW_ENERGY = 100;
 
 function ensureRoomMemory(roomName) {
   if (!Memory.rooms) Memory.rooms = {};
@@ -80,6 +85,7 @@ function discoverSources(room, roomMemory) {
   });
   const spawns = room.find(FIND_MY_SPAWNS);
   const spawn = spawns[0] || null;
+  const storage = room.storage || null;
   const nextSources = {};
 
   for (const source of sources) {
@@ -137,8 +143,116 @@ function discoverSources(room, roomMemory) {
     };
   }
 
+  const sourceContainerIds = {};
+  for (const sourceId in nextSources) {
+    const containerId = nextSources[sourceId].containerId;
+    if (containerId) sourceContainerIds[containerId] = true;
+  }
+  const controllerContainer = room.controller
+    ? containers.find(candidate =>
+      !sourceContainerIds[candidate.id] &&
+      candidate.pos.getRangeTo(room.controller) <= 3
+    ) || null
+    : null;
+
+  for (const sourceId in nextSources) {
+    const entry = nextSources[sourceId];
+    if (!entry.containerId) continue;
+    const container = Game.getObjectById(entry.containerId);
+    if (!container) continue;
+
+    entry.distanceFromStorage = storage
+      ? container.pos.findPathTo(storage.pos, {
+        ignoreCreeps: true
+      }).length
+      : null;
+    entry.distanceFromControllerContainer = controllerContainer
+      ? container.pos.findPathTo(controllerContainer.pos, {
+        ignoreCreeps: true
+      }).length
+      : null;
+    const deliveryDistances = [
+      entry.distanceFromSpawn,
+      entry.distanceFromControllerContainer
+    ].filter(distance => typeof distance === 'number');
+    entry.haulingDistance = storage
+      ? entry.distanceFromStorage
+      : deliveryDistances.length > 0
+        ? Math.max.apply(null, deliveryDistances)
+        : entry.distanceFromSpawn;
+  }
+
   roomMemory.sources = nextSources;
   roomMemory.containerEconomy.lastDiscoveryTick = Game.time;
+}
+
+function updateSourceEnergyPressure(state, haulers, roomMemory) {
+  let totalEnergy = 0;
+  let highNow = false;
+  let allLow = state.readySources.length > 0;
+
+  for (const entry of state.readySources) {
+    const container = entry.containerId
+      ? Game.getObjectById(entry.containerId)
+      : null;
+    const energy = container
+      ? container.store.getUsedCapacity(RESOURCE_ENERGY)
+      : 0;
+    totalEnergy += energy;
+    if (energy > SOURCE_BACKLOG_ENERGY) highNow = true;
+    if (energy >= SOURCE_LOW_ENERGY) allLow = false;
+  }
+
+  const previousTick = roomMemory.sourceEnergySampleTick;
+  const previousEnergy = roomMemory.sourceEnergySample;
+  if (
+    typeof previousTick === 'number' &&
+    typeof previousEnergy === 'number' &&
+    Game.time > previousTick
+  ) {
+    roomMemory.sourceNetEnergyRate =
+      (totalEnergy - previousEnergy) / (Game.time - previousTick);
+  }
+  if (
+    typeof previousTick !== 'number' ||
+    Game.time - previousTick >= 25
+  ) {
+    roomMemory.sourceEnergySampleTick = Game.time;
+    roomMemory.sourceEnergySample = totalEnergy;
+  }
+
+  const economyMemory = Memory.rooms &&
+    Memory.rooms[state.roomName] &&
+    Memory.rooms[state.roomName].economyAccounting;
+  const netBacklog = (
+    (roomMemory.sourceNetEnergyRate || 0) > 2 ||
+    (
+      economyMemory &&
+      (economyMemory.shortNetEnergyRate || 0) > 2
+    )
+  ) && totalEnergy > state.readySources.length * 500;
+  const idleHauler = haulers.some(creep =>
+    creep.memory.task === 'idle:no-source-energy' ||
+    creep.memory.task === 'idle:all-energy-targets-full'
+  );
+
+  roomMemory.haulerBacklogTicks = highNow || netBacklog
+    ? (roomMemory.haulerBacklogTicks || 0) + 1
+    : 0;
+  roomMemory.haulerLowIdleTicks = allLow && idleHauler
+    ? (roomMemory.haulerLowIdleTicks || 0) + 1
+    : 0;
+
+  if (roomMemory.haulerBacklogTicks >= HAULER_BACKLOG_TICKS) {
+    roomMemory.haulerBacklogBonus = 1;
+  } else if (
+    roomMemory.haulerLowIdleTicks >= HAULER_LOW_IDLE_TICKS
+  ) {
+    roomMemory.haulerBacklogBonus = 0;
+  }
+
+  roomMemory.sourceContainerEnergy = totalEnergy;
+  return roomMemory.haulerBacklogBonus || 0;
 }
 
 function updateEnergyHealth(room, economyMemory) {
@@ -194,6 +308,7 @@ function collect(room) {
   economyMemory.energyStarved = energyStarved;
 
   return {
+    roomName: room.name,
     ready: ready,
     mode: mode,
     memoryValid: memoryValid,
@@ -222,21 +337,10 @@ function buildWorkerBody(energyCapacity, role, desiredWork) {
   const body = [];
 
   if (role === 'rcl1Upgrader') {
-    // Balanced [WORK,CARRY,MOVE] triples so the upgrader moves at full speed
-    // between controller and controller container. A single-CARRY body with
-    // many WORK parts crawls at 1/N speed when MOVE ≪ non-MOVE parts,
-    // making the effective upgrade rate ~1/tick regardless of WORK count.
-    const setCost =
-      BODYPART_COST[WORK] +
-      BODYPART_COST[CARRY] +
-      BODYPART_COST[MOVE];
-    const maxSets = Math.floor(energyCapacity / setCost);
-    const workTarget = Math.max(1, Math.ceil((desiredWork || 1) * 0.75));
-    const sets = Math.max(1, Math.min(maxSets, workTarget, 16));
-    for (let i = 0; i < sets; i++) {
-      body.push(WORK, CARRY, MOVE);
-    }
-    return body;
+    return bodyPolicy.buildStaticUpgraderBody(
+      energyCapacity,
+      desiredWork
+    );
   }
 
   const setCost =
@@ -262,42 +366,6 @@ function buildGuardBody(energyCapacity) {
   );
   const body = [];
   for (let i = 0; i < pairs; i++) body.push(ATTACK, MOVE);
-  return body;
-}
-
-function buildSmallAttackBody() {
-  // Phase 1 harassment: 1 TOUGH (tank), 2 ATTACK (60 DPS), 2 MOVE (speed)
-  // Body: [TOUGH, ATTACK, ATTACK, MOVE, MOVE] = 270e
-  return [TOUGH, ATTACK, ATTACK, MOVE, MOVE];
-}
-
-function buildBigAttackBody(energyCapacity) {
-  // Phase 2 final push: max ATTACK for DPS, TOUGH front, MOVE for mobility.
-  const body = [];
-  const BASE_TOUGH = 10;
-  const BASE_ATTACK = 80;
-  const BASE_MOVE = 50;
-
-  const toughParts = Math.max(2, Math.floor(energyCapacity * 0.08 / BASE_TOUGH));
-  let remaining = energyCapacity - toughParts * BASE_TOUGH;
-
-  const pairCost = BASE_ATTACK + BASE_MOVE;
-  const pairs = Math.floor(remaining / pairCost);
-
-  for (let i = 0; i < toughParts; i++) body.push(TOUGH);
-  for (let i = 0; i < pairs; i++) body.push(ATTACK, MOVE);
-
-  return body;
-}
-
-function buildHaulerBody(energyCapacity) {
-  const body = [];
-  const sets = Math.max(1, Math.min(4, Math.floor(energyCapacity / 150)));
-
-  for (let index = 0; index < sets; index++) {
-    body.push(CARRY, CARRY, MOVE);
-  }
-
   return body;
 }
 
@@ -373,7 +441,7 @@ function findMinerNeedingSpawn(state, miners, minerBody) {
       ? sourceEntry.distanceFromSpawn
       : 0;
     const replacementLead =
-      minerBody.length * CREEP_SPAWN_TIME + distance + 50;
+      minerBody.length * CREEP_SPAWN_TIME + distance + 10;
     const sourceMiners = miners.filter(
       creep => creep.memory.sourceId === sourceEntry.sourceId
     );
@@ -393,27 +461,32 @@ function findMinerNeedingSpawn(state, miners, minerBody) {
 function needsHaulerReplacement(
   state,
   haulers,
-  haulerBody,
-  requiredHaulers
+  haulerPlan
 ) {
   const longestRoute = state.readySources.reduce(
     (longest, sourceEntry) => Math.max(
       longest,
-      typeof sourceEntry.distanceFromSpawn === 'number'
-        ? sourceEntry.distanceFromSpawn
+      typeof sourceEntry.haulingDistance === 'number'
+        ? sourceEntry.haulingDistance
+        : typeof sourceEntry.distanceFromSpawn === 'number'
+          ? sourceEntry.distanceFromSpawn
         : 0
     ),
     0
   );
   const replacementLead =
-    haulerBody.length * CREEP_SPAWN_TIME + longestRoute + 10;
+    haulerPlan.body.length * CREEP_SPAWN_TIME + longestRoute + 10;
   const healthyHaulers = haulers.filter(
     creep =>
       creep.ticksToLive === undefined ||
       creep.ticksToLive > replacementLead
   );
+  const healthyCarryParts = healthyHaulers.reduce(
+    (total, creep) => total + creep.getActiveBodyparts(CARRY),
+    0
+  );
 
-  return healthyHaulers.length < requiredHaulers;
+  return healthyCarryParts < haulerPlan.targetCarryParts;
 }
 
 function findSourceWithoutMiner(state, miners) {
@@ -447,7 +520,6 @@ function run(room, state) {
   updateMinerNames(state, miners);
 
   const minerBody = buildMinerBody(room.energyCapacityAvailable);
-  const haulerBody = buildHaulerBody(room.energyCapacityAvailable);
   const missingMiner = findSourceWithoutMiner(state, miners);
   const minersHealthy = !missingMiner;
   const controllerLevel = room.controller ? room.controller.level : 2;
@@ -465,7 +537,38 @@ function run(room, state) {
     capacityPlan,
     'rcl2Hauler'
   ).target;
-  const haulersHealthy = haulers.length >= requiredHaulers;
+  const roomMemory = ensureRoomMemory(room.name);
+  const backlogBonus = updateSourceEnergyPressure(
+    state,
+    haulers,
+    roomMemory.containerEconomy
+  );
+  const capacityHaulerPlan = bodyPolicy.getHaulerPlan(
+    room.energyCapacityAvailable,
+    state.readySources,
+    requiredHaulers,
+    backlogBonus
+  );
+  const dynamicHaulerTarget = capacityHaulerPlan.targetCount;
+  const haulerPlan = bodyPolicy.getHaulerPlan(
+    room.energyCapacityAvailable,
+    state.readySources,
+    dynamicHaulerTarget
+  );
+  const haulersHealthy = !needsHaulerReplacement(
+    state,
+    haulers,
+    haulerPlan
+  );
+  roomMemory.containerEconomy.haulerPlan = {
+    bodyCost: haulerPlan.bodyCost,
+    bodyCarryParts: haulerPlan.bodyCarryParts,
+    requiredCarryParts: haulerPlan.requiredCarryParts,
+    targetCarryParts: haulerPlan.targetCarryParts,
+    targetCount: dynamicHaulerTarget,
+    throughputCount: haulerPlan.throughputCount,
+    backlogBonus: backlogBonus
+  };
   const economyState = economy.update(room, {
     constructionCount: constructionSites.length,
     energyStarved: state.energyStarved,
@@ -481,12 +584,14 @@ function run(room, state) {
   const populationPlan = population.getPlan(
     controllerLevel,
     {
+      roomName: room.name,
       constructionCount: constructionSites.length,
       controllerEmergency: !!economyState.controllerEmergency,
       emergencyRepair: emergencyRepair,
       energyStarved: state.energyStarved,
       generalRepair: generalRepair,
       haulersHealthy: haulersHealthy,
+      haulerTarget: dynamicHaulerTarget,
       hostilesCount: hostiles.length,
       minersHealthy: minersHealthy,
       noCreeps: creeps.length === 0,
@@ -509,6 +614,7 @@ function run(room, state) {
   const guardPolicy = population.getRole(populationPlan, 'guard');
   const minerLimit = minerPolicy.limit;
   const haulerLimit = haulerPolicy.limit;
+  const requiredHaulerCount = haulerPolicy.target;
   population.saveRoomState(room.name, populationPlan);
 
   state.economy = economyState;
@@ -537,31 +643,22 @@ function run(room, state) {
     if (spawnedFallback) return;
   }
 
-  let spawnBlocked = false;
-
   if (missingMiner && miners.length < minerLimit) {
     const emergencyMinerBody = buildMinerBody(room.energyAvailable);
-    const result = trySpawnMiner(spawn, room, missingMiner, emergencyMinerBody);
-    if (result === OK) return;
-    spawnBlocked = true;
+    trySpawnMiner(spawn, room, missingMiner, emergencyMinerBody);
+    return;
   }
 
   if (
-    haulers.length < requiredHaulers &&
+    haulers.length < requiredHaulerCount &&
     haulers.length < haulerLimit
   ) {
-    const emergencyHaulerBody = buildHaulerBody(room.energyAvailable);
-    const result = trySpawnHauler(spawn, room, emergencyHaulerBody);
-    if (result === OK) return;
-    spawnBlocked = true;
-  }
-
-  if (spawnBlocked) {
-    bootstrap.run(room, {
-      harvesterTarget: 1,
-      sourceIds: state.uncoveredSources.map(entry => entry.sourceId),
-      maintainSupport: false
-    });
+    const emergencyHaulerPlan = bodyPolicy.getHaulerPlan(
+      room.energyAvailable,
+      state.readySources,
+      requiredHaulerCount
+    );
+    trySpawnHauler(spawn, room, emergencyHaulerPlan.body);
     return;
   }
 
@@ -570,11 +667,10 @@ function run(room, state) {
     needsHaulerReplacement(
       state,
       haulers,
-      haulerBody,
-      requiredHaulers
+      haulerPlan
     )
   ) {
-    trySpawnHauler(spawn, room, haulerBody);
+    trySpawnHauler(spawn, room, haulerPlan.body);
     return;
   }
 
@@ -603,25 +699,6 @@ function run(room, state) {
       populationPlan: populationPlan
     });
     if (spawnedMaintainer) return;
-  }
-
-  // Attack preparation: phase 1 → small harass creeps; phase 2 → big attack creeps
-  if (economy.isPreparingAttack(room)) {
-    const inPhase2 = economy.isAttackPhaseSpawn(room);
-    const attackBody = inPhase2
-      ? buildBigAttackBody(room.energyCapacityAvailable)
-      : buildSmallAttackBody();
-    const label = inPhase2 ? 'BIG ATTACK' : 'harass';
-    const name = `attack-${room.name}-${spawn.name}-${Game.time}`;
-    const result = spawn.spawnCreep(attackBody, name, {
-      memory: { role: 'guard', home: room.name, attackCreep: true }
-    });
-    if (result === OK) {
-      economy.recordAttackCreepSpawned(room);
-      console.log('[spawn] ' + spawn.name + ' spawning ' + name +
-        ' (' + label + ', ' + attackBody.length + ' parts)');
-    }
-    return;
   }
 
   // Defense: hostiles present → spawn guard before support creeps
@@ -658,5 +735,6 @@ function run(room, state) {
 
 module.exports = {
   collect: collect,
-  run: run
+  run: run,
+  updateSourceEnergyPressure: updateSourceEnergyPressure
 };

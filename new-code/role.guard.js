@@ -1,136 +1,212 @@
-// Guard / Attack Creep — reads Memory.military for attack targets.
-// 
-// Targeting (set via console):
-//   Memory.military = { targetRoom: 'W49N26', sourceCamp: true }
-//
-// Behavior:
-//   1. If in target room: attack hostiles, then camp at sources, then attack structures
-//   2. If not in target room: move to target room exit
-//   3. Default: defend home room
+const ROUTE_CORRIDOR_TOLERANCE = 2;
+const IMMEDIATE_THREAT_RANGE = 3;
+const LEGACY_STANDBY_X = 12;
+const LEGACY_STANDBY_Y = 4;
 
-const ATTACK_RANGE = 1;
-
-function moveToRoom(creep, roomName) {
-  const exitDir = creep.room.findExitTo(roomName);
-  if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) return false;
-
-  const exitPos = creep.pos.findClosestByPath(exitDir);
-  if (!exitPos) return false;
-
-  creep.moveTo(exitPos, { visualizePathStyle: { stroke: '#ff0000' } });
-  creep.memory.task = 'move:to-target-room';
-  return true;
-}
-
-function findHostileSource(creep) {
-  const sources = creep.room.find(FIND_SOURCES);
-  if (sources.length === 0) return null;
-
-  // Pick the source closest to enemy spawn (most likely defended)
-  const enemySpawns = creep.room.find(FIND_HOSTILE_SPAWNS);
-  if (enemySpawns.length > 0) {
-    return sources.sort((a, b) =>
-      a.pos.getRangeTo(enemySpawns[0]) - b.pos.getRangeTo(enemySpawns[0])
-    )[0];
+function getMissionTarget(creep) {
+  if (
+    !creep.memory.attackCreep ||
+    !Memory.military ||
+    Memory.military.enabled !== true
+  ) {
+    return null;
   }
 
-  return creep.pos.findClosestByPath(sources) || sources[0];
+  const military = Memory.military || {};
+  const configured = creep.memory.targetPos || military.targetPos;
+  const roomName =
+    (configured && configured.roomName) ||
+    creep.memory.targetRoom ||
+    military.targetRoom;
+
+  if (!roomName) return null;
+
+  return new RoomPosition(
+    configured && Number.isInteger(configured.x) ? configured.x : 25,
+    configured && Number.isInteger(configured.y) ? configured.y : 25,
+    roomName
+  );
 }
 
-function campSource(creep, source) {
-  // Stand next to the source to block / kill enemy harvesters
-  const pos = creep.pos;
-  if (pos.getRangeTo(source) > 1) {
-    creep.moveTo(source, { range: 1, visualizePathStyle: { stroke: '#ff0000' } });
-    creep.memory.task = 'camp:move-to-source';
-    return;
+function isOnMissionRoute(creep, hostile, missionTarget) {
+  if (!hostile || !hostile.pos) return false;
+  if (hostile.pos.roomName !== creep.room.name) return false;
+
+  if (missionTarget.roomName !== creep.room.name) {
+    return true;
   }
-  creep.memory.task = 'camp:hold-source';
+
+  const creepToHostile = creep.pos.getRangeTo(hostile);
+  if (creepToHostile <= IMMEDIATE_THREAT_RANGE) return true;
+
+  const creepToTarget = creep.pos.getRangeTo(missionTarget);
+  const hostileToTarget = hostile.pos.getRangeTo(missionTarget);
+
+  return (
+    creepToHostile + hostileToTarget <=
+    creepToTarget + ROUTE_CORRIDOR_TOLERANCE
+  );
 }
 
-function findAndAttackHostile(creep) {
+function getLockedTarget(creep, missionTarget) {
+  const targetId = creep.memory.combatTargetId;
+  if (!targetId) return null;
+
+  const target = Game.getObjectById(targetId);
+  if (
+    target &&
+    target.room &&
+    target.room.name === creep.room.name &&
+    isOnMissionRoute(creep, target, missionTarget)
+  ) {
+    return target;
+  }
+
+  delete creep.memory.combatTargetId;
+  return null;
+}
+
+function findMissionTarget(creep, missionTarget) {
+  const locked = getLockedTarget(creep, missionTarget);
+  if (locked) return locked;
+
   const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
-  if (hostiles.length === 0) return false;
-
-  const target = creep.pos.findClosestByPath(hostiles) || hostiles[0];
-  const result = creep.attack(target);
-  if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' } });
-  }
-  creep.memory.task = 'attack:' + (target.name || 'hostile');
-  return true;
-}
-
-function attackStructures(creep) {
-  // Priority: spawn > extension > tower
-  const spawns = creep.room.find(FIND_HOSTILE_SPAWNS);
-  const structures = creep.room.find(FIND_HOSTILE_STRUCTURES, {
-    filter: s =>
-      s.structureType === STRUCTURE_SPAWN ||
-      s.structureType === STRUCTURE_EXTENSION ||
-      s.structureType === STRUCTURE_TOWER
+  const candidates = hostiles.filter(function (hostile) {
+    return isOnMissionRoute(creep, hostile, missionTarget);
   });
 
-  const target = spawns[0] || structures[0];
-  if (!target) return false;
+  if (candidates.length === 0) return null;
 
+  const target =
+    creep.pos.findClosestByPath(candidates) ||
+    creep.pos.findClosestByRange(candidates) ||
+    candidates[0];
+
+  creep.memory.combatTargetId = target.id;
+  return target;
+}
+
+function attackMissionTarget(creep, target) {
   const result = creep.attack(target);
+
   if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' } });
+    creep.moveTo(target, {
+      reusePath: 2,
+      maxRooms: 1,
+      visualizePathStyle: { stroke: '#ff0000' }
+    });
   }
-  creep.memory.task = 'attack:' + target.structureType;
-  return true;
+}
+
+function runAttackMission(creep, missionTarget) {
+  const hostile = findMissionTarget(creep, missionTarget);
+  if (hostile) {
+    attackMissionTarget(creep, hostile);
+    return;
+  }
+
+  delete creep.memory.combatTargetId;
+
+  if (
+    creep.room.name !== missionTarget.roomName ||
+    creep.pos.getRangeTo(missionTarget) > 1
+  ) {
+    creep.moveTo(missionTarget, {
+      range: 1,
+      reusePath: 5,
+      visualizePathStyle: { stroke: '#ff0000' }
+    });
+  }
+}
+
+function runDefense(creep) {
+  const target = creep.pos.findClosestByPath(FIND_HOSTILE_CREEPS);
+  if (target) {
+    const result = creep.attack(target);
+    if (result === ERR_NOT_IN_RANGE) {
+      creep.moveTo(target, {
+        reusePath: 2,
+        visualizePathStyle: { stroke: '#ff0000' }
+      });
+    }
+    return;
+  }
+
+  const spawns = creep.room.find(FIND_MY_SPAWNS);
+  const post = spawns[0] || creep.room.controller;
+  if (post && creep.pos.getRangeTo(post) > 3) {
+    creep.moveTo(post, {
+      range: 3,
+      reusePath: 10,
+      visualizePathStyle: { stroke: '#ff0000' }
+    });
+  }
+}
+
+function retireAttackCreep(creep) {
+  const homeRoom = creep.memory.home;
+  if (!homeRoom) return;
+
+  creep.memory.task = 'standby:legacy-attack';
+
+  if (creep.room.name !== homeRoom) {
+    const exitDirection = creep.room.findExitTo(homeRoom);
+    if (exitDirection < 0) return;
+
+    const exit =
+      creep.pos.findClosestByPath(exitDirection) ||
+      creep.pos.findClosestByRange(exitDirection);
+    if (!exit) return;
+
+    if (creep.pos.isEqualTo(exit)) {
+      creep.move(exitDirection);
+      return;
+    }
+
+    creep.moveTo(exit, {
+      range: 0,
+      reusePath: 3,
+      maxRooms: 1,
+      visualizePathStyle: { stroke: '#00ffff' }
+    });
+    return;
+  }
+
+  const standby = new RoomPosition(
+    LEGACY_STANDBY_X,
+    LEGACY_STANDBY_Y,
+    homeRoom
+  );
+  if (creep.pos.getRangeTo(standby) <= 2) return;
+
+  creep.moveTo(standby, {
+    range: 2,
+    reusePath: 5,
+    visualizePathStyle: { stroke: '#00ffff' }
+  });
 }
 
 module.exports = {
   run: function (creep) {
-    const military = Memory.military;
-    const targetRoom = military && military.targetRoom;
-    const sourceCamp = military && military.sourceCamp;
-
-    // ── Offensive mode: attacking another room ──
-    if (targetRoom && creep.room.name !== targetRoom) {
-      moveToRoom(creep, targetRoom);
+    if (
+      creep.memory.attackCreep &&
+      (
+        !Memory.military ||
+        Memory.military.enabled !== true ||
+        Memory.military.version >= 2
+      )
+    ) {
+      delete creep.memory.combatTargetId;
+      retireAttackCreep(creep);
       return;
     }
 
-    // ── We are in the target room ──
-    if (targetRoom && creep.room.name === targetRoom) {
-      // Priority 1: kill enemy creeps immediately, no staging
-      if (findAndAttackHostile(creep)) return;
-
-      // Priority 2: camp at source to block harvesters
-      if (sourceCamp) {
-        const source = findHostileSource(creep);
-        if (source) {
-          campSource(creep, source);
-          return;
-        }
-      }
-
-      // Priority 3: attack structures
-      if (attackStructures(creep)) return;
-
-      // Fallback: move toward center of room
-      const center = new RoomPosition(25, 25, targetRoom);
-      creep.moveTo(center, { visualizePathStyle: { stroke: '#ff0000' } });
-      creep.memory.task = 'move:room-center';
+    const missionTarget = getMissionTarget(creep);
+    if (missionTarget) {
+      runAttackMission(creep, missionTarget);
       return;
     }
 
-    // ── Defensive mode: protect home room ──
-    if (findAndAttackHostile(creep)) return;
-
-    const spawns = creep.room.find(FIND_MY_SPAWNS);
-    const post = spawns[0] || creep.room.controller;
-    if (post && creep.pos.getRangeTo(post) > 3) {
-      creep.moveTo(post, {
-        range: 3,
-        visualizePathStyle: { stroke: '#ff0000' }
-      });
-      creep.memory.task = 'guard:post';
-    } else {
-      creep.memory.task = 'guard:hold';
-    }
+    runDefense(creep);
   }
 };

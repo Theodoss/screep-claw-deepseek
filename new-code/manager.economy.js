@@ -43,7 +43,31 @@ function recordHarvest(roomName, amount) {
   memory.totalHarvested = (memory.totalHarvested || 0) + amount;
 }
 
-function addSample(memory) {
+function getStoredEnergy(room, creeps) {
+  let total = 0;
+  const structures = room.find(FIND_STRUCTURES);
+
+  for (const structure of structures) {
+    if (
+      !structure.store ||
+      (
+        !structure.my &&
+        structure.structureType !== STRUCTURE_CONTAINER
+      )
+    ) {
+      continue;
+    }
+    total += structure.store.getUsedCapacity(RESOURCE_ENERGY);
+  }
+
+  for (const creep of creeps) {
+    total += creep.store.getUsedCapacity(RESOURCE_ENERGY);
+  }
+
+  return total;
+}
+
+function addSample(memory, storedEnergy) {
   if (!Array.isArray(memory.samples)) memory.samples = [];
 
   const last = memory.samples[memory.samples.length - 1];
@@ -51,23 +75,31 @@ function addSample(memory) {
 
   memory.samples.push({
     tick: Game.time,
-    harvested: memory.totalHarvested || 0
+    harvested: memory.totalHarvested || 0,
+    storedEnergy: storedEnergy
   });
   memory.samples = memory.samples.slice(-MAX_SAMPLES);
 }
 
-function getIncomeRate(memory, window) {
-  const currentHarvested = memory.totalHarvested || 0;
+function getBaselineSample(memory, window, field) {
   const targetTick = Game.time - window;
   let baseline = null;
 
   for (const sample of memory.samples || []) {
+    if (typeof sample[field] !== 'number') continue;
     if (!baseline) baseline = sample;
     if (sample.tick >= targetTick) {
       baseline = sample;
       break;
     }
   }
+
+  return baseline;
+}
+
+function getIncomeRate(memory, window) {
+  const currentHarvested = memory.totalHarvested || 0;
+  let baseline = getBaselineSample(memory, window, 'harvested');
 
   if (!baseline && typeof memory.startedAt === 'number') {
     baseline = {
@@ -82,13 +114,30 @@ function getIncomeRate(memory, window) {
     (Game.time - baseline.tick);
 }
 
-const NON_ECONOMY_ROLES = ['guard', 'squadMelee', 'squadHealer', 'squadRanged'];
+function getEnergyFlow(memory, window, storedEnergy) {
+  const baseline = getBaselineSample(memory, window, 'storedEnergy');
+  if (!baseline || Game.time <= baseline.tick) {
+    return {
+      consumptionRate: 0,
+      netRate: 0
+    };
+  }
+
+  const elapsed = Game.time - baseline.tick;
+  const harvested = (memory.totalHarvested || 0) - baseline.harvested;
+  const inventoryChange = storedEnergy - baseline.storedEnergy;
+
+  return {
+    consumptionRate: (harvested - inventoryChange) / elapsed,
+    netRate: inventoryChange / elapsed
+  };
+}
 
 function getReplacementRate(creeps) {
   let rate = 0;
 
   for (const creep of creeps) {
-    if (NON_ECONOMY_ROLES.indexOf(creep.memory.role) !== -1) {
+    if (creep.memory.role === 'guard') {
       continue;
     }
 
@@ -127,84 +176,18 @@ function controllerEmergency(room) {
   );
 }
 
-// Attack preparation: two-phase military buildup at RCL4+.
-// Phase 1 (extensions building): small-wave harassment (1T,2A,2M = 270e) + minimal upgrade.
-// Phase 2 (extensions full): big-wave attack creeps (max capacity) + zero upgrade.
-
-function getExtensionMax(rcl) {
-  if (typeof CONTROLLER_STRUCTURES === 'undefined') return 60;
-  return (CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION] || [])[rcl] || 0;
-}
-
-function getExtensionCount(room) {
-  return room.find(FIND_MY_STRUCTURES, {
-    filter: structure => structure.structureType === STRUCTURE_EXTENSION
-  }).length;
-}
-
-function getExtensionSiteCount(room) {
-  return room.find(FIND_MY_CONSTRUCTION_SITES, {
-    filter: site => site.structureType === STRUCTURE_EXTENSION
-  }).length;
-}
-
-function isPreparingAttack(room) {
-  if (!room.controller || room.controller.level < 4) return false;
-
-  const roomMemory = Memory.rooms && Memory.rooms[room.name]
-    ? Memory.rooms[room.name]
-    : {};
-  const prep = roomMemory.attackPrep || {};
-
-  if (prep.completed) return false;
-  return true;
-}
-
-function isAttackPhaseSpawn(room) {
-  // Phase 2 check: extensions all built (or sited) → ready for big attack creeps
-  const rcl = room.controller ? room.controller.level : 4;
-  const maxExt = getExtensionMax(rcl);
-  const builtExt = getExtensionCount(room);
-  const siteExt = getExtensionSiteCount(room);
-  return (builtExt + siteExt) >= maxExt;
-}
-
-function startAttackPrep(room) {
-  if (!Memory.rooms) Memory.rooms = {};
-  if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
-
-  const roomMemory = Memory.rooms[room.name];
-  if (!roomMemory.attackPrep) {
-    const rcl = room.controller ? room.controller.level : 3;
-    roomMemory.attackPrep = {
-      startedAt: Game.time,
-      spawnedCount: 0,
-      completed: false
-    };
-    console.log('[military] attack prep started at RCL ' + rcl +
-      ' — small-wave harassment');
-  }
-}
-
-function recordAttackCreepSpawned(room) {
-  if (!Memory.rooms || !Memory.rooms[room.name]) return;
-  const prep = Memory.rooms[room.name].attackPrep;
-  if (!prep || prep.completed) return;
-
-  prep.spawnedCount = (prep.spawnedCount || 0) + 1;
-  console.log('[military] attack creep spawned: ' +
-    prep.spawnedCount + ' built');
-}
-
 function update(room, context) {
   const input = context || {};
   const memory = ensureRoomMemory(room.name);
   const creeps = room.find(FIND_MY_CREEPS);
+  const storedEnergy = getStoredEnergy(room, creeps);
 
-  addSample(memory);
+  addSample(memory, storedEnergy);
 
   const shortIncomeRate = getIncomeRate(memory, SHORT_WINDOW);
   const longIncomeRate = getIncomeRate(memory, LONG_WINDOW);
+  const shortFlow = getEnergyFlow(memory, SHORT_WINDOW, storedEnergy);
+  const longFlow = getEnergyFlow(memory, LONG_WINDOW, storedEnergy);
   const measuredRates = [shortIncomeRate, longIncomeRate].filter(
     rate => rate > 0
   );
@@ -221,12 +204,11 @@ function update(room, context) {
   const defenseReserve = input.hostilesCount > 0
     ? incomeRate
     : Math.min(0.5, incomeRate * 0.05);
-  const healthy = !input.energyStarved && input.haulersHealthy !== false && input.minersHealthy !== false;
   const safetyReserve = incomeRate > 0
-    ? Math.max(1, incomeRate * (healthy ? 0.05 : 0.1))
+    ? Math.max(1, incomeRate * 0.1)
     : 0;
   const emergency = controllerEmergency(room);
-  let recovery = !!(
+  const recovery = !!(
     input.energyStarved ||
     input.minersHealthy === false ||
     input.haulersHealthy === false
@@ -240,19 +222,8 @@ function update(room, context) {
       repairReserve -
       defenseReserve -
       safetyReserve
-    ) * 0.8
+    ) * 0.85
   );
-
-  // Attack preparation: phase 1 → minimal upgrade; phase 2 → zero upgrade
-  if (input.hostilesCount > 0 && isPreparingAttack(room)) {
-    startAttackPrep(room);
-    if (isAttackPhaseSpawn(room)) {
-      upgradeRate = 0;
-    } else {
-      upgradeRate = 1;
-    }
-    recovery = false;
-  }
 
   if (recovery || input.hostilesCount > 0) {
     upgradeRate = 0;
@@ -275,6 +246,11 @@ function update(room, context) {
   memory.shortIncomeRate = shortIncomeRate;
   memory.longIncomeRate = longIncomeRate;
   memory.incomeRate = incomeRate;
+  memory.storedEnergy = storedEnergy;
+  memory.shortNetEnergyRate = shortFlow.netRate;
+  memory.longNetEnergyRate = longFlow.netRate;
+  memory.shortConsumptionRate = shortFlow.consumptionRate;
+  memory.longConsumptionRate = longFlow.consumptionRate;
   memory.replacementRate = replacementRate;
   memory.constructionReserve = constructionReserve;
   memory.repairReserve = repairReserve;
@@ -392,11 +368,7 @@ module.exports = {
   controllerEmergency: controllerEmergency,
   getControllerContainer: getControllerContainer,
   getState: getState,
-  isAttackPhaseSpawn: isAttackPhaseSpawn,
-  isPreparingAttack: isPreparingAttack,
-  recordAttackCreepSpawned: recordAttackCreepSpawned,
   recordHarvest: recordHarvest,
   recordUpgrade: recordUpgrade,
-  startAttackPrep: startAttackPrep,
   update: update
 };

@@ -53,12 +53,7 @@ module.exports = {
       if (
         controllerContainer.store.getUsedCapacity(RESOURCE_ENERGY) === 0
       ) {
-        if (economy.controllerEmergency(creep.room)) {
-          creep.memory.task = 'harvest:controller-emergency';
-          acquireFallbackEnergy(creep);
-        } else {
-          creep.memory.task = 'idle:controller-container-empty';
-        }
+        creep.memory.task = 'idle:controller-container-empty';
         return;
       }
 
@@ -78,12 +73,9 @@ module.exports = {
     if (
       economyState.recovery ||
       !creep.room.controller ||
-      creep.room.controller.level < 2 ||
-      economy.controllerEmergency(creep.room)
+      creep.room.controller.level < 2
     ) {
-      creep.memory.task = economy.controllerEmergency(creep.room)
-        ? 'harvest:controller-emergency'
-        : 'harvest:recovery-fallback';
+      creep.memory.task = 'harvest:recovery-fallback';
       acquireFallbackEnergy(creep);
     } else {
       creep.memory.task = 'idle:no-controller-container';

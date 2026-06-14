@@ -1,4 +1,4 @@
-const POLICY_VERSION = 2;
+const POLICY_VERSION = 3;
 const RCL1_SPAWN_ORDER = [
   'rcl1Harvester',
   'rcl1Builder',
@@ -54,8 +54,8 @@ const FALLBACK_PROFILES = {
     spawnOrder: [
       'rcl2Miner',
       'rcl2Hauler',
-      'rcl1Upgrader',
-      'rcl1Builder'
+      'rcl1Builder',
+      'rcl1Upgrader'
     ],
     suspendUpgrade: false
   },
@@ -103,7 +103,7 @@ const RCL_POLICIES = {
       harvesterMin: 0,
       harvesterMax: 4,
       minersPerSource: 1,
-      haulersPerSource: 1,
+      haulersPerSource: 2,
       linkedHaulersPerSource: 1,
       builderMax: 1,
       upgraderMax: 2,
@@ -125,9 +125,9 @@ const RCL_POLICIES = {
       harvesterMin: 0,
       harvesterMax: 4,
       minersPerSource: 1,
-      haulersPerSource: 1,
+      haulersPerSource: 1.5,
       linkedHaulersPerSource: 1,
-      builderMax: 2,
+      builderMax: 1,
       upgraderMax: 2,
       guardMax: 2,
       scoutMax: 0,
@@ -147,9 +147,9 @@ const RCL_POLICIES = {
       harvesterMin: 0,
       harvesterMax: 4,
       minersPerSource: 1,
-      haulersPerSource: 1,
+      haulersPerSource: 1.5,
       linkedHaulersPerSource: 1,
-      builderMax: 2,
+      builderMax: 1,
       upgraderMax: 2,
       guardMax: 2,
       scoutMax: 0,
@@ -169,9 +169,9 @@ const RCL_POLICIES = {
       harvesterMin: 0,
       harvesterMax: 4,
       minersPerSource: 1,
-      haulersPerSource: 1,
+      haulersPerSource: 1.5,
       linkedHaulersPerSource: 0.5,
-      builderMax: 2,
+      builderMax: 1,
       upgraderMax: 2,
       guardMax: 2,
       scoutMax: 1,
@@ -193,7 +193,7 @@ const RCL_POLICIES = {
       minersPerSource: 1,
       haulersPerSource: 1,
       linkedHaulersPerSource: 0.5,
-      builderMax: 2,
+      builderMax: 1,
       upgraderMax: 2,
       guardMax: 2,
       scoutMax: 1,
@@ -215,7 +215,7 @@ const RCL_POLICIES = {
       minersPerSource: 1,
       haulersPerSource: 1,
       linkedHaulersPerSource: 0.5,
-      builderMax: 2,
+      builderMax: 1,
       upgraderMax: 2,
       guardMax: 2,
       scoutMax: 1,
@@ -237,7 +237,7 @@ const RCL_POLICIES = {
       minersPerSource: 1,
       haulersPerSource: 1,
       linkedHaulersPerSource: 0.5,
-      builderMax: 2,
+      builderMax: 1,
       upgraderMax: 1,
       guardMax: 2,
       scoutMax: 1,
@@ -301,11 +301,40 @@ function createRole(target, limit) {
   };
 }
 
+function getBuilderBoostSettings(roomName) {
+  if (
+    !roomName ||
+    typeof Memory === 'undefined' ||
+    !Memory.rooms ||
+    !Memory.rooms[roomName]
+  ) {
+    return {
+      enabled: false,
+      extra: 0
+    };
+  }
+
+  const raw = Memory.rooms[roomName].builderBoost;
+  if (!raw || raw.enabled !== true) {
+    return {
+      enabled: false,
+      extra: 0
+    };
+  }
+
+  return {
+    enabled: true,
+    extra: Math.max(0, Math.floor(raw.extra || 0))
+  };
+}
+
 function getPlan(rcl, context) {
   const level = normalizeRcl(rcl);
   const input = context || {};
   const policy = getPolicy(level);
   const config = policy.population;
+  const builderBoost = getBuilderBoostSettings(input.roomName);
+  const builderLimit = config.builderMax + builderBoost.extra;
   const sourceCount = Math.max(0, input.sourceCount || 0);
   const readySourceCount = Math.max(
     0,
@@ -347,9 +376,13 @@ function getPlan(rcl, context) {
   const haulerRatio = input.linkEconomyReady
     ? config.linkedHaulersPerSource
     : config.haulersPerSource;
-  const haulerTarget = readySourceCount > 0
+  const baselineHaulerTarget = readySourceCount > 0
     ? Math.max(1, Math.ceil(readySourceCount * haulerRatio))
     : 0;
+  const haulerTarget = Math.max(
+    baselineHaulerTarget,
+    Math.ceil(input.haulerTarget || 0)
+  );
   const haulerLimit = haulerTarget > 0 ? haulerTarget + 1 : 0;
   const needsBuilder = !!(
     input.emergencyRepair ||
@@ -375,8 +408,8 @@ function getPlan(rcl, context) {
     rcl2Miner: createRole(minerTarget, minerLimit),
     rcl2Hauler: createRole(haulerTarget, haulerLimit),
     rcl1Builder: createRole(
-      needsBuilder ? config.builderMax : 0,
-      config.builderMax
+      needsBuilder ? builderLimit : 0,
+      builderLimit
     ),
     rcl1Upgrader: createRole(
       upgraderWorkTarget > 0 ? 1 : 0,
@@ -426,6 +459,7 @@ function getPlan(rcl, context) {
     version: POLICY_VERSION,
     rcl: level,
     economyMode: policy.economyMode,
+    builderBoost: builderBoost,
     fallback: primaryFallback,
     fallbackActive: primaryFallback !== FALLBACK.NONE,
     fallbackReasons: fallbackReasons,
@@ -487,6 +521,7 @@ function saveRoomState(roomName, plan) {
     version: plan.version,
     rcl: plan.rcl,
     economyMode: plan.economyMode,
+    builderBoost: plan.builderBoost,
     fallback: plan.fallback,
     fallbackActive: plan.fallbackActive,
     fallbackReasons: plan.fallbackReasons.slice(),

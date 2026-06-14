@@ -1,6 +1,6 @@
 const economy = require('manager.economy');
 
-const TOWER_PEACE_RESERVE = 600;
+const TOWER_PEACE_RESERVE = 800;
 
 function getRoomSourceMemory(creep) {
   if (!Memory.rooms || !Memory.rooms[creep.memory.home]) return {};
