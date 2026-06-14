@@ -82,11 +82,13 @@ function getIncomeRate(memory, window) {
     (Game.time - baseline.tick);
 }
 
+const NON_ECONOMY_ROLES = ['guard', 'squadMelee', 'squadHealer', 'squadRanged'];
+
 function getReplacementRate(creeps) {
   let rate = 0;
 
   for (const creep of creeps) {
-    if (creep.memory.role === 'guard') {
+    if (NON_ECONOMY_ROLES.indexOf(creep.memory.role) !== -1) {
       continue;
     }
 
