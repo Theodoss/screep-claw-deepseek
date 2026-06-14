@@ -373,7 +373,7 @@ function findMinerNeedingSpawn(state, miners, minerBody) {
       ? sourceEntry.distanceFromSpawn
       : 0;
     const replacementLead =
-      minerBody.length * CREEP_SPAWN_TIME + distance + 10;
+      minerBody.length * CREEP_SPAWN_TIME + distance + 50;
     const sourceMiners = miners.filter(
       creep => creep.memory.sourceId === sourceEntry.sourceId
     );
