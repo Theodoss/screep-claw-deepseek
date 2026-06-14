@@ -2,6 +2,8 @@ const SOURCE_ENERGY_PER_TICK = 10;
 const CARRY_CAPACITY_PER_PART = 50;
 const HAULER_SET_COST = 150;
 const HAULER_SET_PARTS = 3;
+const HAULER_THROUGHPUT_MARGIN = 1.1;
+const MIN_HAULER_CARRY_PARTS = 6;
 const DEFAULT_SOURCE_DISTANCE = 10;
 
 function getBodyCost(body) {
@@ -64,17 +66,28 @@ function getHaulerPlan(
 ) {
   const requiredCarryParts = getRequiredHaulerCarryParts(sourceEntries);
   const maxCarryParts = getMaxHaulerCarryParts(energyCapacity);
+  const bufferedCarryParts = Math.ceil(
+    requiredCarryParts * HAULER_THROUGHPUT_MARGIN
+  );
   const throughputCount = Math.max(
     1,
-    Math.ceil(requiredCarryParts / maxCarryParts)
+    Math.ceil(bufferedCarryParts / maxCarryParts)
   );
   const targetCount = Math.max(
     1,
     Math.ceil(minimumCount || 1),
     throughputCount
   ) + Math.max(0, Math.floor(backlogBonus || 0));
+  const minimumCarryPartsPerHauler = Math.min(
+    MIN_HAULER_CARRY_PARTS,
+    maxCarryParts
+  );
+  const targetCarryParts = Math.max(
+    bufferedCarryParts,
+    targetCount * minimumCarryPartsPerHauler
+  );
   const carryPartsPerHauler = Math.ceil(
-    requiredCarryParts / targetCount
+    targetCarryParts / targetCount
   );
   const desiredSets = Math.max(1, Math.ceil(carryPartsPerHauler / 2));
   const sets = Math.min(desiredSets, maxCarryParts / 2);
@@ -90,7 +103,7 @@ function getHaulerPlan(
     bodyCarryParts: sets * 2,
     maxCarryParts: maxCarryParts,
     requiredCarryParts: requiredCarryParts,
-    targetCarryParts: requiredCarryParts,
+    targetCarryParts: targetCarryParts,
     targetCount: targetCount,
     throughputCount: throughputCount
   };

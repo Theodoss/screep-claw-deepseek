@@ -203,9 +203,9 @@ function update(room, context) {
     : 0;
   const defenseReserve = input.hostilesCount > 0
     ? incomeRate
-    : (storedEnergy > 5000 ? 0 : Math.min(0.5, incomeRate * 0.05));
+    : Math.min(0.5, incomeRate * 0.05);
   const safetyReserve = incomeRate > 0
-    ? (storedEnergy > 5000 ? 0 : storedEnergy > 2000 ? Math.max(0.5, incomeRate * 0.05) : Math.max(1, incomeRate * 0.1))
+    ? Math.max(1, incomeRate * 0.1)
     : 0;
   const emergency = controllerEmergency(room);
   const recovery = !!(
@@ -213,6 +213,10 @@ function update(room, context) {
     input.minersHealthy === false ||
     input.haulersHealthy === false
   );
+  let upgradeMultiplier = 0.80;
+  if (storedEnergy > 10000) upgradeMultiplier = 0.95;
+  else if (storedEnergy > 5000) upgradeMultiplier = 0.88;
+
   let upgradeRate = Math.max(
     0,
     (
@@ -222,7 +226,7 @@ function update(room, context) {
       repairReserve -
       defenseReserve -
       safetyReserve
-    ) * 0.85
+    ) * upgradeMultiplier
   );
 
   if (recovery || input.hostilesCount > 0) {

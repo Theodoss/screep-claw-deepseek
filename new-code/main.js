@@ -5,11 +5,16 @@ const roleRcl1Upgrader = require('role.rcl1Upgrader');
 const roleRcl1Builder = require('role.rcl1Builder');
 const roleRcl2Miner = require('role.rcl2Miner');
 const roleRcl2Hauler = require('role.rcl2Hauler');
+const roleRemoteMiner = require('role.remoteMiner');
+const roleRemoteHauler = require('role.remoteHauler');
+const roleRemoteBuilder = require('role.remoteBuilder');
+const roleReserver = require('role.reserver');
 const roleGuard = require('role.guard');
 const roleSquadMelee = require('role.squadMelee');
 const roleSquadHealer = require('role.squadHealer');
 const roleSquadRanged = require('role.squadRanged');
 const military = require('manager.military');
+const remote = require('manager.remote');
 const stats = require('manager.stats');
 const intel = require('manager.intel');
 const errorReporter = require('core.errorReporter');
@@ -31,6 +36,10 @@ const ROLE_MODULES = {
   rcl1Builder: roleRcl1Builder,
   rcl2Miner: roleRcl2Miner,
   rcl2Hauler: roleRcl2Hauler,
+  remoteMiner: roleRemoteMiner,
+  remoteHauler: roleRemoteHauler,
+  remoteBuilder: roleRemoteBuilder,
+  reserver: roleReserver,
   guard: roleGuard,
   squadMelee: roleSquadMelee,
   squadHealer: roleSquadHealer,
@@ -69,7 +78,7 @@ function activateRoomPlanner(roomName) {
 
 module.exports.loop = function () {
   try {
-    military.update();
+    military.update(false);
   } catch (err) {
     errorReporter.capture(err, {
       module: 'manager.military.update'
@@ -157,6 +166,15 @@ module.exports.loop = function () {
         room: roomName
       });
     }
+  }
+
+  // Remote spawning runs after every home manager has had first use of spawn.
+  try {
+    remote.run();
+  } catch (err) {
+    errorReporter.capture(err, {
+      module: 'manager.remote'
+    });
   }
 
   // 3. 執行每隻 creep 的 role

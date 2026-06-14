@@ -39,11 +39,8 @@ module.exports = {
     }
 
     const economyState = economy.getState(creep.room);
-    const ampleEnergy = (economyState.storedEnergy || 0) > 5000;
-    const effectiveRecovery = economyState.recovery && !ampleEnergy;
-
     if (creep.memory.working) {
-      if (effectiveRecovery) {
+      if (economyState.recovery) {
         support.runRecoveryWork(creep);
       } else {
         support.runUpgraderWork(creep);
@@ -52,7 +49,7 @@ module.exports = {
     }
 
     const controllerContainer = economy.getControllerContainer(creep.room);
-    if (controllerContainer && !effectiveRecovery) {
+    if (controllerContainer && !economyState.recovery) {
       if (
         controllerContainer.store.getUsedCapacity(RESOURCE_ENERGY) === 0
       ) {

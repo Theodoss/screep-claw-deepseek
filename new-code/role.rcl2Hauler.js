@@ -1,4 +1,5 @@
 const economy = require('manager.economy');
+const logistics = require('logistics.local');
 
 const TOWER_PEACE_RESERVE = 800;
 
@@ -136,47 +137,74 @@ function findTower(creep) {
   return creep.pos.findClosestByPath(targets);
 }
 
-function findControllerContainer(creep) {
-  const state = economy.getState(creep.room);
+function findStorage(creep) {
+  const storage = creep.room.storage;
   if (
-    state.recovery ||
-    (state.upgraderWorkTarget || 0) <= 0
+    !storage ||
+    storage.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
   ) {
     return null;
   }
 
-  const container = economy.getControllerContainer(creep.room);
-  if (
-    !container ||
-    container.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
-  ) {
-    return null;
-  }
-
-  return container;
+  return storage;
 }
 
 function findEnergyTarget(creep) {
-  if (economy.controllerEmergency(creep.room)) {
+  const state = economy.getState(creep.room);
+  const controllerEmergency = economy.controllerEmergency(creep.room);
+  if (controllerEmergency) {
     const controllerContainer = economy.getControllerContainer(creep.room);
-    if (
-      controllerContainer &&
-      controllerContainer.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-    ) {
-      return controllerContainer;
-    }
+    const emergencyRequest = logistics.getControllerDeliveryRequest(
+      creep,
+      controllerContainer,
+      state,
+      true
+    );
+    if (emergencyRequest) return emergencyRequest;
   }
 
-  return (
-    findSpawnOrExtension(creep) ||
-    findTower(creep) ||
-    findControllerContainer(creep)
-  );
+  const spawnTarget = findSpawnOrExtension(creep);
+  if (spawnTarget) {
+    logistics.clearDeliveryAssignment(creep);
+    return {
+      target: spawnTarget,
+      reason: spawnTarget.structureType
+    };
+  }
+
+  const towerTarget = findTower(creep);
+  if (towerTarget) {
+    logistics.clearDeliveryAssignment(creep);
+    return {
+      target: towerTarget,
+      reason: towerTarget.structureType
+    };
+  }
+
+  if (!state.recovery && (state.upgraderWorkTarget || 0) > 0) {
+    const controllerContainer = economy.getControllerContainer(creep.room);
+    const controllerRequest = logistics.getControllerDeliveryRequest(
+      creep,
+      controllerContainer,
+      state,
+      false
+    );
+    if (controllerRequest) return controllerRequest;
+  }
+
+  logistics.clearDeliveryAssignment(creep);
+  const storage = findStorage(creep);
+  return storage
+    ? {
+        target: storage,
+        reason: storage.structureType
+      }
+    : null;
 }
 
 function deliver(creep) {
-  const target = findEnergyTarget(creep);
-  if (!target) {
+  const request = findEnergyTarget(creep);
+  if (!request) {
     const canBufferMore =
       creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
       getSourceContainers(creep).some(
@@ -194,10 +222,23 @@ function deliver(creep) {
     return false;
   }
 
-  creep.memory.task = `transfer:${target.structureType}`;
-  const result = creep.transfer(target, RESOURCE_ENERGY);
+  creep.memory.task = `transfer:${request.reason}`;
+  const result = request.amount === undefined
+    ? creep.transfer(request.target, RESOURCE_ENERGY)
+    : creep.transfer(
+      request.target,
+      RESOURCE_ENERGY,
+      request.amount
+    );
   if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+    creep.moveTo(request.target, {
+      visualizePathStyle: { stroke: '#ffffff' }
+    });
+  } else if (
+    result === OK &&
+    creep.memory.deliveryTargetId === request.target.id
+  ) {
+    creep.memory.deliveryIntentTick = Game.time;
   }
   return true;
 }
