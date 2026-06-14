@@ -222,20 +222,16 @@ function buildWorkerBody(energyCapacity, role, desiredWork) {
   const body = [];
 
   if (role === 'rcl1Upgrader') {
-    // Balanced [WORK,CARRY,MOVE] triples so the upgrader moves at full speed
-    // between controller and controller container. A single-CARRY body with
-    // many WORK parts crawls at 1/N speed when MOVE ≪ non-MOVE parts,
-    // making the effective upgrade rate ~1/tick regardless of WORK count.
-    const setCost =
-      BODYPART_COST[WORK] +
-      BODYPART_COST[CARRY] +
-      BODYPART_COST[MOVE];
-    const maxSets = Math.floor(energyCapacity / setCost);
-    const workTarget = Math.max(1, Math.ceil((desiredWork || 1) * 0.75));
-    const sets = Math.max(1, Math.min(maxSets, workTarget, 16));
-    for (let i = 0; i < sets; i++) {
-      body.push(WORK, CARRY, MOVE);
-    }
+    const affordableWork = Math.max(
+      1,
+      Math.floor(
+        (energyCapacity - BODYPART_COST[CARRY] - BODYPART_COST[MOVE]) /
+        BODYPART_COST[WORK]
+      )
+    );
+    const workParts = Math.min(48, affordableWork, desiredWork || 1);
+    for (let index = 0; index < workParts; index++) body.push(WORK);
+    body.push(CARRY, MOVE);
     return body;
   }
 
@@ -265,34 +261,9 @@ function buildGuardBody(energyCapacity) {
   return body;
 }
 
-function buildSmallAttackBody() {
-  // Phase 1 harassment: 1 TOUGH (tank), 2 ATTACK (60 DPS), 2 MOVE (speed)
-  // Body: [TOUGH, ATTACK, ATTACK, MOVE, MOVE] = 270e
-  return [TOUGH, ATTACK, ATTACK, MOVE, MOVE];
-}
-
-function buildBigAttackBody(energyCapacity) {
-  // Phase 2 final push: max ATTACK for DPS, TOUGH front, MOVE for mobility.
-  const body = [];
-  const BASE_TOUGH = 10;
-  const BASE_ATTACK = 80;
-  const BASE_MOVE = 50;
-
-  const toughParts = Math.max(2, Math.floor(energyCapacity * 0.08 / BASE_TOUGH));
-  let remaining = energyCapacity - toughParts * BASE_TOUGH;
-
-  const pairCost = BASE_ATTACK + BASE_MOVE;
-  const pairs = Math.floor(remaining / pairCost);
-
-  for (let i = 0; i < toughParts; i++) body.push(TOUGH);
-  for (let i = 0; i < pairs; i++) body.push(ATTACK, MOVE);
-
-  return body;
-}
-
 function buildHaulerBody(energyCapacity) {
   const body = [];
-  const sets = Math.max(1, Math.min(4, Math.floor(energyCapacity / 150)));
+  const sets = Math.max(1, Math.min(3, Math.floor(energyCapacity / 150)));
 
   for (let index = 0; index < sets; index++) {
     body.push(CARRY, CARRY, MOVE);
@@ -537,13 +508,10 @@ function run(room, state) {
     if (spawnedFallback) return;
   }
 
-  let spawnBlocked = false;
-
   if (missingMiner && miners.length < minerLimit) {
     const emergencyMinerBody = buildMinerBody(room.energyAvailable);
-    const result = trySpawnMiner(spawn, room, missingMiner, emergencyMinerBody);
-    if (result === OK) return;
-    spawnBlocked = true;
+    trySpawnMiner(spawn, room, missingMiner, emergencyMinerBody);
+    return;
   }
 
   if (
@@ -551,17 +519,7 @@ function run(room, state) {
     haulers.length < haulerLimit
   ) {
     const emergencyHaulerBody = buildHaulerBody(room.energyAvailable);
-    const result = trySpawnHauler(spawn, room, emergencyHaulerBody);
-    if (result === OK) return;
-    spawnBlocked = true;
-  }
-
-  if (spawnBlocked) {
-    bootstrap.run(room, {
-      harvesterTarget: 1,
-      sourceIds: state.uncoveredSources.map(entry => entry.sourceId),
-      maintainSupport: false
-    });
+    trySpawnHauler(spawn, room, emergencyHaulerBody);
     return;
   }
 
@@ -603,25 +561,6 @@ function run(room, state) {
       populationPlan: populationPlan
     });
     if (spawnedMaintainer) return;
-  }
-
-  // Attack preparation: phase 1 → small harass creeps; phase 2 → big attack creeps
-  if (economy.isPreparingAttack(room)) {
-    const inPhase2 = economy.isAttackPhaseSpawn(room);
-    const attackBody = inPhase2
-      ? buildBigAttackBody(room.energyCapacityAvailable)
-      : buildSmallAttackBody();
-    const label = inPhase2 ? 'BIG ATTACK' : 'harass';
-    const name = `attack-${room.name}-${spawn.name}-${Game.time}`;
-    const result = spawn.spawnCreep(attackBody, name, {
-      memory: { role: 'guard', home: room.name, attackCreep: true }
-    });
-    if (result === OK) {
-      economy.recordAttackCreepSpawned(room);
-      console.log('[spawn] ' + spawn.name + ' spawning ' + name +
-        ' (' + label + ', ' + attackBody.length + ' parts)');
-    }
-    return;
   }
 
   // Defense: hostiles present → spawn guard before support creeps
