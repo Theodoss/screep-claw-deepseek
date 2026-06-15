@@ -221,7 +221,10 @@ function update(room, context) {
     (input.haulersHealthy === false && storedEnergy < 5000)
   );
   let upgradeMultiplier = 0.80;
-  if (storedEnergy > 30000) upgradeMultiplier = 1.00;
+  if (storedEnergy > 300000) upgradeMultiplier = 1.35;
+  else if (storedEnergy > 200000) upgradeMultiplier = 1.20;
+  else if (storedEnergy > 100000) upgradeMultiplier = 1.10;
+  else if (storedEnergy > 30000) upgradeMultiplier = 1.00;
   else if (storedEnergy > 10000) upgradeMultiplier = 0.95;
   else if (storedEnergy > 5000) upgradeMultiplier = 0.88;
 
