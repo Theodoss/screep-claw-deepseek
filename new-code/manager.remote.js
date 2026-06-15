@@ -389,12 +389,15 @@ function getBodyCost(body) {
   return total;
 }
 
+// Remote miner stands on container and harvests. Without CARRY, harvest()
+// drops energy directly onto the container tile, which auto-collects it.
+// CARRY is wasted (same principle as D003 for local miners).
 function buildRemoteMinerBody(energyCapacity) {
-  if (energyCapacity >= 600) {
-    return [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE];
+  if (energyCapacity >= 550) {
+    return [WORK, WORK, WORK, WORK, WORK, MOVE];
   }
-  if (energyCapacity >= 400) {
-    return [WORK, WORK, WORK, CARRY, MOVE];
+  if (energyCapacity >= 350) {
+    return [WORK, WORK, WORK, MOVE];
   }
   return null;
 }
