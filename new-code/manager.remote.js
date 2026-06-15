@@ -733,13 +733,15 @@ function getSpawnRequests(homeRoomName) {
       homeRoomName,
       remoteRoomName
     );
+    const reserverReplacementLead = reserverBody
+      ? reserverBody.length * CREEP_SPAWN_TIME + 150
+      : 0;
     if (
       reserverBody &&
       stable &&
-      Game.time - remoteConfig.stableSince >= REMOTE_STABLE_TICKS &&
       controller &&
       reservationLow &&
-      reservers.length === 0
+      !hasHealthyAssignedCreep(reservers, reserverReplacementLead)
     ) {
       requests.push({
         role: 'reserver',
