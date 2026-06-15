@@ -276,10 +276,15 @@ function getFallbackReasons(context) {
   ) {
     reasons.push(FALLBACK.BOOTSTRAP);
   }
+  // Only flag economy-recovery when stored energy is actually low.
+  // Transient hauler replacement or energyAvailable dips during spawning
+  // should not trigger recovery mode when the colony is energy-rich.
   if (
-    input.energyStarved ||
-    input.minersHealthy === false ||
-    input.haulersHealthy === false
+    (input.storedEnergy || 0) < 50000 && (
+      input.energyStarved ||
+      input.minersHealthy === false ||
+      input.haulersHealthy === false
+    )
   ) {
     reasons.push(FALLBACK.ECONOMY_RECOVERY);
   }
