@@ -18,6 +18,7 @@ function countRole(creeps, role) {
 function getUpgraderState(creeps, spawn, room) {
   let count = 0;
   let healthyWork = 0;
+  let dyingCount = 0;
   const controllerRange = room.controller
     ? spawn.pos.getRangeTo(room.controller)
     : 0;
@@ -36,12 +37,15 @@ function getUpgraderState(creeps, spawn, room) {
       creep.ticksToLive > replacementLead
     ) {
       healthyWork += work;
+    } else {
+      dyingCount++;
     }
   }
 
   return {
     count: count,
-    healthyWork: healthyWork
+    healthyWork: healthyWork,
+    dyingCount: dyingCount
   };
 }
 
@@ -285,8 +289,11 @@ function run(room, options) {
     return true;
   }
 
+  // Use (count - dyingCount) so we replace dying upgraders before
+  // they expire, avoiding a work gap.  Raw count includes dying
+  // creeps and would block replacement when count >= limit+1.
   if (
-    upgraders.count < upgraderPolicy.limit + 1 &&
+    (upgraders.count - upgraders.dyingCount) < upgraderPolicy.limit + 1 &&
     upgraders.healthyWork < upgraderWorkTarget
   ) {
     trySpawn(
