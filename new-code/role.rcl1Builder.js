@@ -125,6 +125,24 @@ module.exports = {
       creep.memory.working = true;
     }
 
+    // If we're carrying meaningful energy and no easy sources are
+    // available (containers dry, no salvage), switch to working early
+    // instead of waiting to fill 100%.  Otherwise the builder wastes
+    // ticks trying to top off from nearly-empty containers while
+    // upgradeable energy goes unused.
+    if (
+      !creep.memory.working &&
+      creep.store.getUsedCapacity(RESOURCE_ENERGY) >= 50
+    ) {
+      const salvage = selectSalvageTarget(creep);
+      if (!salvage || !salvage.target) {
+        const container = selectContainer(creep);
+        if (!container) {
+          creep.memory.working = true;
+        }
+      }
+    }
+
     if (creep.memory.working) {
       support.runBuilderWork(creep);
       return;
