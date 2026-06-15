@@ -284,7 +284,7 @@ module.exports = {
 
     if (
       !creep.memory.working &&
-      (freeCap === 0 || (used > 0 && totalCap > 0 && freeCap / totalCap < 0.2))
+      (freeCap === 0 || (used > 0 && totalCap > 0 && freeCap / totalCap <= 0.2))
     ) {
       creep.memory.working = true;
     }

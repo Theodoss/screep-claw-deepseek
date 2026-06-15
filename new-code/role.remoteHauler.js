@@ -249,7 +249,7 @@ module.exports = {
     const free = creep.store.getFreeCapacity(RESOURCE_ENERGY);
     const cap = creep.store.getCapacity(RESOURCE_ENERGY);
 
-    if (free === 0 || (used > 0 && cap > 0 && free / cap < 0.2)) {
+    if (free === 0 || (used > 0 && cap > 0 && free / cap <= 0.2)) {
       creep.memory.delivering = true;
     }
     if (used === 0 || (creep.memory.delivering && cap > 0 && used / cap < 0.1)) {
