@@ -3,6 +3,8 @@ const REMOTE_ROOM = 'W49N26';
 const DANGER_PAUSE_TICKS = 1500;
 const REMOTE_STABLE_TICKS = 100;
 const TOWER_LOW_ENERGY = 400;
+const REMOTE_ROAD_SITE_INTERVAL = 25;
+const REMOTE_ROAD_MAX_ACTIVE_SITES = 3;
 
 const DEFAULT_SOURCES = [
   {
@@ -41,6 +43,192 @@ function fillSourceMissing(source, defaults) {
   changed = fillMissing(source, 'containerX', defaults.containerX) || changed;
   changed = fillMissing(source, 'containerY', defaults.containerY) || changed;
   changed = fillMissing(source, 'enabled', defaults.enabled) || changed;
+
+  return changed;
+}
+
+function setAllSourcesEnabled(remoteConfig, enabled) {
+  if (!remoteConfig || !Array.isArray(remoteConfig.sources)) return false;
+
+  let changed = false;
+  for (let index = 0; index < remoteConfig.sources.length; index++) {
+    const sourceConfig = remoteConfig.sources[index];
+    if (!sourceConfig) continue;
+    if (sourceConfig.enabled !== enabled) {
+      sourceConfig.enabled = enabled;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function compareSources(a, b) {
+  if (a.y !== b.y) return a.y - b.y;
+  if (a.x !== b.x) return a.x - b.x;
+  if (a.id && b.id) return a.id < b.id ? -1 : 1;
+  return 0;
+}
+
+function getVisibleSources(roomName) {
+  const room = Game.rooms[roomName];
+  if (!room) return [];
+
+  const sources = room.find(FIND_SOURCES).slice();
+  sources.sort((left, right) => compareSources(left.pos, right.pos));
+  return sources;
+}
+
+function findContainerPositionForSource(source) {
+  const terrain = Game.map.getRoomTerrain(source.pos.roomName);
+  const candidates = [
+    [0, -1],
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+    [1, -1],
+    [1, 1],
+    [-1, 1],
+    [-1, -1]
+  ];
+
+  for (let index = 0; index < candidates.length; index++) {
+    const x = source.pos.x + candidates[index][0];
+    const y = source.pos.y + candidates[index][1];
+
+    if (x <= 0 || x >= 49 || y <= 0 || y >= 49) continue;
+    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+    return {
+      x: x,
+      y: y
+    };
+  }
+
+  return {
+    x: source.pos.x,
+    y: source.pos.y
+  };
+}
+
+function sourceExistsAt(source, x, y) {
+  return source.pos.x === x && source.pos.y === y;
+}
+
+function syncVisibleSources(remoteConfig, roomName) {
+  if (!remoteConfig || !Array.isArray(remoteConfig.sources)) return false;
+
+  const visibleSources = getVisibleSources(roomName);
+  if (visibleSources.length === 0) return false;
+
+  let changed = false;
+  const matchedConfigIndexes = {};
+  const matchedSourceIndexes = {};
+
+  for (let index = 0; index < remoteConfig.sources.length; index++) {
+    const sourceConfig = remoteConfig.sources[index];
+    if (!sourceConfig) continue;
+
+    for (let sourceIndex = 0; sourceIndex < visibleSources.length; sourceIndex++) {
+      const source = visibleSources[sourceIndex];
+      if (matchedSourceIndexes[sourceIndex]) continue;
+      if (sourceConfig.id && sourceConfig.id === source.id) {
+        matchedConfigIndexes[index] = true;
+        matchedSourceIndexes[sourceIndex] = true;
+        break;
+      }
+      if (sourceExistsAt(source, sourceConfig.x, sourceConfig.y)) {
+        matchedConfigIndexes[index] = true;
+        matchedSourceIndexes[sourceIndex] = true;
+        if (sourceConfig.id !== source.id) {
+          sourceConfig.id = source.id;
+          changed = true;
+        }
+        break;
+      }
+    }
+  }
+
+  for (let sourceIndex = 0; sourceIndex < visibleSources.length; sourceIndex++) {
+    if (matchedSourceIndexes[sourceIndex]) continue;
+
+    const source = visibleSources[sourceIndex];
+    let targetIndex = -1;
+    let reusedInvalidSlot = false;
+
+    for (let index = 0; index < remoteConfig.sources.length; index++) {
+      const sourceConfig = remoteConfig.sources[index];
+      if (!sourceConfig || matchedConfigIndexes[index]) continue;
+
+      const hasKnownPosition = typeof sourceConfig.x === 'number' &&
+        typeof sourceConfig.y === 'number';
+      const positionStillValid = hasKnownPosition &&
+        visibleSources.some(visible =>
+          sourceExistsAt(visible, sourceConfig.x, sourceConfig.y)
+        );
+      if (sourceConfig.id && sourceConfig.id === source.id) {
+        targetIndex = index;
+        break;
+      }
+      if (!positionStillValid) {
+        targetIndex = index;
+        reusedInvalidSlot = true;
+        break;
+      }
+    }
+
+    const containerPos = findContainerPositionForSource(source);
+    if (targetIndex === -1) {
+      remoteConfig.sources.push({
+        id: source.id,
+        x: source.pos.x,
+        y: source.pos.y,
+        roomName: roomName,
+        containerX: containerPos.x,
+        containerY: containerPos.y,
+        enabled: true
+      });
+      matchedSourceIndexes[sourceIndex] = true;
+      changed = true;
+      continue;
+    }
+
+    const target = remoteConfig.sources[targetIndex];
+    if (target.id !== source.id) {
+      target.id = source.id;
+      changed = true;
+    }
+    if (target.x !== source.pos.x) {
+      target.x = source.pos.x;
+      changed = true;
+    }
+    if (target.y !== source.pos.y) {
+      target.y = source.pos.y;
+      changed = true;
+    }
+    if (target.roomName !== roomName) {
+      target.roomName = roomName;
+      changed = true;
+    }
+    if (
+      reusedInvalidSlot ||
+      target.containerX === undefined ||
+      target.containerY === undefined
+    ) {
+      if (target.containerX !== containerPos.x) {
+        target.containerX = containerPos.x;
+        changed = true;
+      }
+      if (target.containerY !== containerPos.y) {
+        target.containerY = containerPos.y;
+        changed = true;
+      }
+    }
+    if (target.enabled !== true) {
+      target.enabled = true;
+      changed = true;
+    }
+  }
 
   return changed;
 }
@@ -173,6 +361,210 @@ function findContainerSiteAt(roomName, x, y) {
   return null;
 }
 
+function findRoadAt(roomName, x, y) {
+  const structures = getPositionLook(roomName, x, y, LOOK_STRUCTURES);
+
+  for (let index = 0; index < structures.length; index++) {
+    if (structures[index].structureType === STRUCTURE_ROAD) {
+      return structures[index];
+    }
+  }
+
+  return null;
+}
+
+function findRoadSiteAt(roomName, x, y) {
+  const sites = getPositionLook(roomName, x, y, LOOK_CONSTRUCTION_SITES);
+
+  for (let index = 0; index < sites.length; index++) {
+    if (sites[index].structureType === STRUCTURE_ROAD) {
+      return sites[index];
+    }
+  }
+
+  return null;
+}
+
+function buildRemoteRoadMatrix(roomName) {
+  const room = Game.rooms[roomName];
+  if (!room) return false;
+
+  const terrain = Game.map.getRoomTerrain(roomName);
+  const matrix = new PathFinder.CostMatrix();
+
+  for (let x = 0; x < 50; x++) {
+    for (let y = 0; y < 50; y++) {
+      if (terrain.get(x, y) === TERRAIN_MASK_WALL) {
+        matrix.set(x, y, 255);
+      } else {
+        matrix.set(x, y, 2);
+      }
+    }
+  }
+
+  const structures = room.find(FIND_STRUCTURES);
+  for (let index = 0; index < structures.length; index++) {
+    const structure = structures[index];
+    if (structure.structureType === STRUCTURE_ROAD) {
+      matrix.set(structure.pos.x, structure.pos.y, 1);
+      continue;
+    }
+    if (
+      structure.structureType === STRUCTURE_CONTAINER ||
+      structure.structureType === STRUCTURE_RAMPART
+    ) {
+      continue;
+    }
+    matrix.set(structure.pos.x, structure.pos.y, 255);
+  }
+
+  const sites = room.find(FIND_CONSTRUCTION_SITES);
+  for (let index = 0; index < sites.length; index++) {
+    const site = sites[index];
+    if (
+      site.structureType === STRUCTURE_ROAD ||
+      site.structureType === STRUCTURE_CONTAINER
+    ) {
+      continue;
+    }
+    matrix.set(site.pos.x, site.pos.y, 255);
+  }
+
+  return matrix;
+}
+
+function countActiveConstructionSites(roomNames) {
+  let count = 0;
+
+  for (let index = 0; index < roomNames.length; index++) {
+    const room = Game.rooms[roomNames[index]];
+    if (!room) continue;
+    count += room.find(FIND_CONSTRUCTION_SITES).length;
+  }
+
+  return count;
+}
+
+function getRemoteRoadOrigin(homeRoomName) {
+  const room = Game.rooms[homeRoomName];
+  if (!room) return null;
+
+  if (room.storage) return room.storage.pos;
+
+  const spawn = getHomeSpawn(room);
+  return spawn ? spawn.pos : null;
+}
+
+function ensureRemoteRoad(sourceConfig, homeRoomName) {
+  const origin = getRemoteRoadOrigin(homeRoomName);
+  const targetRoom = Game.rooms[sourceConfig.roomName];
+  const homeRoom = Game.rooms[homeRoomName];
+
+  if (!origin || !homeRoom || !targetRoom) return false;
+  if (
+    countActiveConstructionSites([homeRoomName, sourceConfig.roomName]) >=
+    REMOTE_ROAD_MAX_ACTIVE_SITES
+  ) {
+    return false;
+  }
+
+  const target = new RoomPosition(
+    sourceConfig.containerX,
+    sourceConfig.containerY,
+    sourceConfig.roomName
+  );
+  const result = PathFinder.search(
+    origin,
+    { pos: target, range: 1 },
+    {
+      maxRooms: 2,
+      maxOps: 4000,
+      plainCost: 2,
+      swampCost: 10,
+      roomCallback: roomName => {
+        if (!Game.rooms[roomName]) return false;
+        return buildRemoteRoadMatrix(roomName);
+      }
+    }
+  );
+  if (result.incomplete || result.path.length === 0) return false;
+
+  for (let index = 0; index < result.path.length; index++) {
+    const step = result.path[index];
+    if (
+      step.x === origin.x &&
+      step.y === origin.y &&
+      step.roomName === origin.roomName
+    ) {
+      continue;
+    }
+    if (
+      step.x === sourceConfig.containerX &&
+      step.y === sourceConfig.containerY &&
+      step.roomName === sourceConfig.roomName
+    ) {
+      continue;
+    }
+    if (findRoadAt(step.roomName, step.x, step.y)) continue;
+    if (findRoadSiteAt(step.roomName, step.x, step.y)) continue;
+    if (findContainerAt(step.roomName, step.x, step.y)) continue;
+    if (findContainerSiteAt(step.roomName, step.x, step.y)) continue;
+
+    const room = Game.rooms[step.roomName];
+    if (!room) continue;
+
+    const createResult = room.createConstructionSite(
+      step.x,
+      step.y,
+      STRUCTURE_ROAD
+    );
+    if (createResult === OK) {
+      console.log(
+        `[remote] road site created ${step.roomName} ${step.x},${step.y}`
+      );
+      return true;
+    }
+    if (createResult !== ERR_FULL) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function planRemoteRoads(homeRoomName, remoteRoomName, remoteConfig) {
+  if (Game.time % REMOTE_ROAD_SITE_INTERVAL !== 0) return false;
+  if (isRemotePaused(homeRoomName, remoteRoomName)) return false;
+  if (!remoteConfig || !Array.isArray(remoteConfig.sources)) return false;
+  if (!Game.rooms[remoteRoomName] || !Game.rooms[homeRoomName]) return false;
+
+  for (let index = 0; index < remoteConfig.sources.length; index++) {
+    const sourceConfig = remoteConfig.sources[index];
+    if (!sourceConfig || sourceConfig.enabled !== true) continue;
+    if (!findContainerAt(
+      remoteRoomName,
+      sourceConfig.containerX,
+      sourceConfig.containerY
+    )) {
+      continue;
+    }
+
+    const haulers = getAssignedCreeps(
+      'remoteHauler',
+      homeRoomName,
+      remoteRoomName,
+      index
+    );
+    if (haulers.length === 0) continue;
+
+    if (ensureRemoteRoad(sourceConfig, homeRoomName)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function ensureContainerSite(sourceConfig) {
   const room = Game.rooms[sourceConfig.roomName];
   if (!room) return false;
@@ -250,6 +642,7 @@ function updateRemoteRoom(homeRoomName, remoteRoomName, remoteConfig) {
     remoteConfig.status = 'danger';
     remoteConfig.pauseUntil = Game.time + DANGER_PAUSE_TICKS;
     remoteConfig.stableSince = 0;
+    setAllSourcesEnabled(remoteConfig, false);
     if (stateChanged) {
       console.log(
         `[remote] danger detected ${remoteRoomName}; paused until ` +
@@ -259,6 +652,7 @@ function updateRemoteRoom(homeRoomName, remoteRoomName, remoteConfig) {
   } else if ((remoteConfig.pauseUntil || 0) <= Game.time) {
     const stateChanged = remoteConfig.status !== 'active';
     remoteConfig.status = 'active';
+    setAllSourcesEnabled(remoteConfig, true);
     if (stateChanged) {
       console.log(`[remote] resumed ${remoteRoomName}`);
     }
@@ -268,6 +662,7 @@ function updateRemoteRoom(homeRoomName, remoteRoomName, remoteConfig) {
   if (room.controller && !remoteConfig.controllerId) {
     remoteConfig.controllerId = room.controller.id;
   }
+  syncVisibleSources(remoteConfig, remoteRoomName);
 
   if (!Array.isArray(remoteConfig.sources)) return;
   for (let index = 0; index < remoteConfig.sources.length; index++) {
@@ -400,6 +795,20 @@ function buildRemoteMinerBody(energyCapacity) {
 }
 
 function buildRemoteHaulerBody(energyCapacity) {
+  if (energyCapacity >= 1300) {
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 800) {
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+    ];
+  }
   if (energyCapacity >= 600) {
     return [
       CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
@@ -492,30 +901,11 @@ function createSourceRequest(
 }
 
 function remoteNeedsBuilder(remoteRoomName, remoteConfig) {
-  if (!Game.rooms[remoteRoomName]) return false;
+  const room = Game.rooms[remoteRoomName];
+  if (!room) return false;
 
-  for (let index = 0; index < remoteConfig.sources.length; index++) {
-    const sourceConfig = remoteConfig.sources[index];
-    if (!sourceConfig || sourceConfig.enabled !== true) continue;
-
-    const site = findContainerSiteAt(
-      remoteRoomName,
-      sourceConfig.containerX,
-      sourceConfig.containerY
-    );
-    if (site) return true;
-
-    const container = findContainerAt(
-      remoteRoomName,
-      sourceConfig.containerX,
-      sourceConfig.containerY
-    );
-    if (container && container.hits < container.hitsMax * 0.8) {
-      return true;
-    }
-  }
-
-  return false;
+  const sites = room.find(FIND_CONSTRUCTION_SITES);
+  return sites.length > 0;
 }
 
 function remoteInfrastructureStable(
@@ -641,10 +1031,7 @@ function getSpawnRequests(homeRoomName) {
         index
       );
       const replacementLead = haulerBody.length * CREEP_SPAWN_TIME + 150;
-      const healthyCount = assigned.filter(
-        c => c.ticksToLive === undefined || c.ticksToLive > replacementLead
-      ).length;
-      if (healthyCount < 2) {
+      if (!hasHealthyAssignedCreep(assigned, replacementLead)) {
         requests.push(createSourceRequest(
           'remoteHauler',
           homeRoomName,
@@ -791,6 +1178,11 @@ function run() {
       remoteRoomName,
       homeConfig.rooms[remoteRoomName]
     );
+    planRemoteRoads(
+      HOME_ROOM,
+      remoteRoomName,
+      homeConfig.rooms[remoteRoomName]
+    );
   }
 
   const requests = getSpawnRequests(HOME_ROOM);
@@ -821,8 +1213,11 @@ module.exports = {
   REMOTE_ROOM: REMOTE_ROOM,
   TOWER_LOW_ENERGY: TOWER_LOW_ENERGY,
   ensureContainerSite: ensureContainerSite,
+  ensureRemoteRoad: ensureRemoteRoad,
   findContainerAt: findContainerAt,
   findContainerSiteAt: findContainerSiteAt,
+  findRoadAt: findRoadAt,
+  findRoadSiteAt: findRoadSiteAt,
   getRemoteConfig: getRemoteConfig,
   getSourceConfig: getSourceConfig,
   getSpawnRequests: getSpawnRequests,
