@@ -99,9 +99,32 @@ function selectPickupContainer(creep) {
   return selected;
 }
 
+function findPickupStorage(creep) {
+  const storage = creep.room.storage;
+  if (
+    !storage ||
+    storage.store.getUsedCapacity(RESOURCE_ENERGY) <= 0
+  ) {
+    return null;
+  }
+
+  return storage;
+}
+
 function selectPickup(creep) {
-  return selectSalvage(creep) || {
-    target: selectPickupContainer(creep),
+  const salvage = selectSalvage(creep);
+  if (salvage) return salvage;
+
+  const container = selectPickupContainer(creep);
+  if (container) {
+    return {
+      target: container,
+      type: 'withdraw'
+    };
+  }
+
+  return {
+    target: findPickupStorage(creep),
     type: 'withdraw'
   };
 }

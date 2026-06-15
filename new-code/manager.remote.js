@@ -400,6 +400,20 @@ function buildRemoteMinerBody(energyCapacity) {
 }
 
 function buildRemoteHaulerBody(energyCapacity) {
+  if (energyCapacity >= 1300) {
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 800) {
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+    ];
+  }
   if (energyCapacity >= 600) {
     return [
       CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
