@@ -736,12 +736,15 @@ function getSpawnRequests(homeRoomName) {
     const reserverReplacementLead = reserverBody
       ? reserverBody.length * CREEP_SPAWN_TIME + 150
       : 0;
+    // Spawn a new reserver when there's no healthy one.
+    // reservationLow gates the INITIAL spawn only; once a reserver
+    // exists we replace by TTL to avoid reservation gaps.
     if (
       reserverBody &&
       stable &&
       controller &&
-      reservationLow &&
-      !hasHealthyAssignedCreep(reservers, reserverReplacementLead)
+      !hasHealthyAssignedCreep(reservers, reserverReplacementLead) &&
+      (reservationLow || reservers.length > 0)
     ) {
       requests.push({
         role: 'reserver',
