@@ -276,9 +276,15 @@ module.exports = {
       delete creep.memory.containerId;
     }
 
+    // Use 80% threshold like remoteHauler: switch to delivering when
+    // near-full instead of walking to an empty source container.
+    const used = creep.store.getUsedCapacity(RESOURCE_ENERGY);
+    const freeCap = creep.store.getFreeCapacity(RESOURCE_ENERGY);
+    const totalCap = creep.store.getCapacity();
+
     if (
       !creep.memory.working &&
-      creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0
+      (freeCap === 0 || (used > 0 && totalCap > 0 && freeCap / totalCap < 0.2))
     ) {
       creep.memory.working = true;
     }
