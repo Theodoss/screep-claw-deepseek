@@ -196,7 +196,7 @@ function update(room, context) {
     : 0;
   const replacementRate = getReplacementRate(creeps);
   const constructionReserve = input.constructionCount > 0
-    ? Math.min(2, incomeRate * 0.15)
+    ? (storedEnergy > 50000 ? 0 : Math.min(2, incomeRate * 0.15))
     : 0;
   const repairReserve = input.repairBacklog
     ? Math.min(1, incomeRate * 0.1)
