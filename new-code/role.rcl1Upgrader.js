@@ -48,15 +48,13 @@ module.exports = {
       return;
     }
 
+    // Preferred: controller container (skip if empty)
     const controllerContainer = economy.getControllerContainer(creep.room);
-    if (controllerContainer && !economyState.recovery) {
-      if (
-        controllerContainer.store.getUsedCapacity(RESOURCE_ENERGY) === 0
-      ) {
-        creep.memory.task = 'idle:controller-container-empty';
-        return;
-      }
-
+    if (
+      controllerContainer &&
+      !economyState.recovery &&
+      controllerContainer.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    ) {
       creep.memory.task = 'withdraw:controller-container';
       const result = creep.withdraw(
         controllerContainer,
@@ -70,6 +68,7 @@ module.exports = {
       return;
     }
 
+    // Recovery or low RCL: harvest directly from source
     if (
       economyState.recovery ||
       !creep.room.controller ||
@@ -77,8 +76,49 @@ module.exports = {
     ) {
       creep.memory.task = 'harvest:recovery-fallback';
       acquireFallbackEnergy(creep);
-    } else {
-      creep.memory.task = 'idle:no-controller-container';
+      return;
     }
+
+    // Fallback: withdraw from storage when controller container is empty/missing
+    const storage = creep.room.storage;
+    if (
+      storage &&
+      storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      creep.memory.task = 'withdraw:storage-fallback';
+      const result = creep.withdraw(storage, RESOURCE_ENERGY);
+      if (result === ERR_NOT_IN_RANGE) {
+        creep.moveTo(storage, {
+          visualizePathStyle: { stroke: '#ffaa00' }
+        });
+      }
+      return;
+    }
+
+    // Last resort: spawn/extension
+    const spawn = creep.pos.findClosestByPath(
+      FIND_MY_STRUCTURES,
+      {
+        filter: function (structure) {
+          return (
+            structure.structureType === STRUCTURE_SPAWN ||
+            structure.structureType === STRUCTURE_EXTENSION
+          ) &&
+          structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+        }
+      }
+    );
+    if (spawn) {
+      creep.memory.task = 'withdraw:spawn-fallback';
+      const result = creep.withdraw(spawn, RESOURCE_ENERGY);
+      if (result === ERR_NOT_IN_RANGE) {
+        creep.moveTo(spawn, {
+          visualizePathStyle: { stroke: '#ffaa00' }
+        });
+      }
+      return;
+    }
+
+    creep.memory.task = 'idle:no-energy-source';
   }
 };
