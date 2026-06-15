@@ -198,12 +198,19 @@ function update(room, context) {
   const constructionReserve = input.constructionCount > 0
     ? (storedEnergy > 50000 ? 0 : Math.min(2, incomeRate * 0.15))
     : 0;
-  const repairReserve = input.repairBacklog
+  // When stored energy is abundant, we can afford to loosen reserves.
+  // Halve repair & defense reserves when storedEnergy > 100k.
+  const abundantEnergy = storedEnergy > 100000;
+  let repairReserve = input.repairBacklog
     ? Math.min(1, incomeRate * 0.1)
     : 0;
-  const defenseReserve = input.hostilesCount > 0
+  let defenseReserve = input.hostilesCount > 0
     ? incomeRate
     : Math.min(0.5, incomeRate * 0.05);
+  if (abundantEnergy) {
+    repairReserve *= 0.5;
+    defenseReserve *= 0.5;
+  }
   const safetyReserve = incomeRate > 0
     ? (storedEnergy > 5000 ? 0 : storedEnergy > 2000 ? Math.max(0.5, incomeRate * 0.05) : Math.max(1, incomeRate * 0.1))
     : 0;
