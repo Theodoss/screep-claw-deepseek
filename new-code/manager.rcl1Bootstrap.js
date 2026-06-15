@@ -224,7 +224,11 @@ function run(room, options) {
 
   // Dynamic body builder: maximize WORK, min CARRY+MOVE.
   // Upgraders and builders near containers don't need extra C/M.
-  const energyCapacity = room.energyCapacityAvailable;
+  // Use room.energyAvailable (spawn + extensions actual energy) instead of
+  // room.energyCapacityAvailable so the body fits within current budget.
+  // When energy is low we spawn smaller bodies; when extensions are full
+  // we automatically scale up to bigger bodies.
+  const energyCapacity = room.energyAvailable;
   const bodyBuilder = settings.bodyBuilder || null;
   const buildBody = (role, desiredWork) => {
     if (bodyBuilder) {
