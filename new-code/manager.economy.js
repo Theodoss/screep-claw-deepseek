@@ -211,7 +211,7 @@ function update(room, context) {
   const recovery = !!(
     input.energyStarved ||
     input.minersHealthy === false ||
-    input.haulersHealthy === false
+    (input.haulersHealthy === false && storedEnergy < 5000)
   );
   let upgradeMultiplier = 0.80;
   if (storedEnergy > 30000) upgradeMultiplier = 1.00;
