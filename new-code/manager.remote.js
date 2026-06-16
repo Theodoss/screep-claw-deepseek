@@ -337,14 +337,23 @@ function isHomeEconomyStable(homeRoomName) {
 
   const spawn = getHomeSpawn(room);
   if (!spawn || spawn.spawning) return false;
-  if (room.energyAvailable < room.energyCapacityAvailable) return false;
+
+  // When stored energy is abundant (>50k), transient extension dips
+  // should not pause remote spawning. A 150-energy gap on a 376k
+  // reserve is noise, not a stability concern.
+  const remoteRoomMemory = Memory.rooms && Memory.rooms[homeRoomName]
+    ? Memory.rooms[homeRoomName]
+    : {};
+  const remoteEconMemory = remoteRoomMemory.economyAccounting || {};
+  const storedEnergy = remoteEconMemory.storedEnergy || 0;
+  if (storedEnergy < 50000 && room.energyAvailable < room.energyCapacityAvailable) {
+    return false;
+  }
 
   const hostiles = room.find(FIND_HOSTILE_CREEPS);
   if (hostiles.length > 0) return false;
 
-  const roomMemory = Memory.rooms && Memory.rooms[homeRoomName]
-    ? Memory.rooms[homeRoomName]
-    : {};
+  const roomMemory = remoteRoomMemory;
   const containerEconomy = roomMemory.containerEconomy || {};
   const economy = roomMemory.economyAccounting || {};
   const populationPolicy = roomMemory.populationPolicy || {};
