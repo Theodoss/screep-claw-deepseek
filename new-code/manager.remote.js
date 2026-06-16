@@ -954,16 +954,15 @@ function getSpawnRequests(homeRoomName) {
     const reserverReplacementLead = reserverBody
       ? reserverBody.length * CREEP_SPAWN_TIME + 150
       : 0;
-    // Spawn a reserver only when reservation is at risk (ticksToEnd < 2000).
-    // We don't pre-replace healthy reservers — that causes double-spawning.
-    // A reserver with 600 TTL will live 900 more ticks, well past the
-    // ~156 tick replacement lead. Only spawn when the controller actually
-    // needs it.
+    // Spawn a reserver only when reservation is at risk AND there's no
+    // healthy one already heading there. Without the healthy check,
+    // reservationLow stays true for many ticks and spawns a flood.
     if (
       reserverBody &&
       stable &&
       controller &&
-      reservationLow
+      reservationLow &&
+      !hasHealthyAssignedCreep(reservers, reserverReplacementLead)
     ) {
       requests.push({
         role: 'reserver',
