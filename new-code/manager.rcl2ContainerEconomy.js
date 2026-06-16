@@ -739,13 +739,30 @@ function run(room, state) {
     return;
   }
 
+  // Upgrader body builder: use room capacity (energyCapacityAvailable)
+  // instead of transient energyAvailable. When extensions are partially
+  // depleted from hauler/miner spawns, energyAvailable-based bodies
+  // produce 3-4x fewer WORK parts than what the colony can sustain.
+  // This wrapper guarantees maximal upgrader bodies regardless of
+  // spawn-cycle energy dips (the 50% floor in bootstrap still gates
+  // overall spawn permission).
+  const upgraderBodyBuilder = function (energyCap, role, desiredWork) {
+    if (role === 'rcl1Upgrader') {
+      return bodyPolicy.buildStaticUpgraderBody(
+        room.energyCapacityAvailable,
+        desiredWork
+      );
+    }
+    return buildWorkerBody(energyCap, role, desiredWork);
+  };
+
   bootstrap.run(room, {
     harvesterTarget: fallbackTarget,
     sourceIds: fallbackSourceIds,
     maintainSupport: true,
     builderTarget: builderPolicy.target,
     upgraderWorkTarget: upgraderWorkTarget,
-    bodyBuilder: buildWorkerBody,
+    bodyBuilder: upgraderBodyBuilder,
     populationPlan: populationPlan
   });
 }
