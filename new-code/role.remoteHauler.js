@@ -11,18 +11,9 @@ function closestTarget(creep, targets) {
 }
 
 function findHomeDeliveryTarget(creep) {
-  // Priority 1: controller container (upgrade containers)
-  // Keep upgraders fed first — remote energy should fuel progress.
-  const controllerContainer = economy.getControllerContainer(creep.room);
-  if (
-    controllerContainer &&
-    controllerContainer.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-  ) {
-    return controllerContainer;
-  }
-
   const myStructures = creep.room.find(FIND_MY_STRUCTURES);
   const spawnTargets = [];
+  const extTargets = [];
   const towerTargets = [];
 
   for (let index = 0; index < myStructures.length; index++) {
@@ -30,11 +21,10 @@ function findHomeDeliveryTarget(creep) {
     if (!structure.store) continue;
     if (structure.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) continue;
 
-    if (
-      structure.structureType === STRUCTURE_SPAWN ||
-      structure.structureType === STRUCTURE_EXTENSION
-    ) {
+    if (structure.structureType === STRUCTURE_SPAWN) {
       spawnTargets.push(structure);
+    } else if (structure.structureType === STRUCTURE_EXTENSION) {
+      extTargets.push(structure);
     } else if (
       structure.structureType === STRUCTURE_TOWER &&
       structure.store.getUsedCapacity(RESOURCE_ENERGY) <
@@ -44,12 +34,27 @@ function findHomeDeliveryTarget(creep) {
     }
   }
 
+  // 1. Spawn
   if (spawnTargets.length > 0) {
     return closestTarget(creep, spawnTargets);
   }
+  // 2. Extension
+  if (extTargets.length > 0) {
+    return closestTarget(creep, extTargets);
+  }
+  // 3. Tower
   if (towerTargets.length > 0) {
     return closestTarget(creep, towerTargets);
   }
+  // 4. Upgrade container
+  const controllerContainer = economy.getControllerContainer(creep.room);
+  if (
+    controllerContainer &&
+    controllerContainer.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+  ) {
+    return controllerContainer;
+  }
+  // 5. Storage
   if (
     creep.room.storage &&
     creep.room.storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0

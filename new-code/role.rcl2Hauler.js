@@ -129,6 +129,30 @@ function selectPickup(creep) {
   };
 }
 
+function findSpawnTarget(creep) {
+  const target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+    filter: function (structure) {
+      return (
+        structure.structureType === STRUCTURE_SPAWN &&
+        structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+      );
+    }
+  });
+  return target || null;
+}
+
+function findExtensionTarget(creep) {
+  const target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+    filter: function (structure) {
+      return (
+        structure.structureType === STRUCTURE_EXTENSION &&
+        structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+      );
+    }
+  });
+  return target || null;
+}
+
 function findSpawnOrExtension(creep) {
   const targets = creep.room.find(FIND_MY_STRUCTURES, {
     filter: structure =>
@@ -175,6 +199,8 @@ function findStorage(creep) {
 function findEnergyTarget(creep) {
   const state = economy.getState(creep.room);
   const controllerEmergency = economy.controllerEmergency(creep.room);
+
+  // 1. Controller emergency: drop everything, feed upgrade container
   if (controllerEmergency) {
     const controllerContainer = economy.getControllerContainer(creep.room);
     const emergencyRequest = logistics.getControllerDeliveryRequest(
@@ -186,8 +212,28 @@ function findEnergyTarget(creep) {
     if (emergencyRequest) return emergencyRequest;
   }
 
-  // Upgrade containers: deliver here before spawn/extensions so
-  // upgraders always have a nearby energy source.
+  // 2. Spawn (not full)
+  const spawnTarget = findSpawnTarget(creep);
+  if (spawnTarget) {
+    logistics.clearDeliveryAssignment(creep);
+    return { target: spawnTarget, reason: STRUCTURE_SPAWN };
+  }
+
+  // 3. Extension (not full)
+  const extTarget = findExtensionTarget(creep);
+  if (extTarget) {
+    logistics.clearDeliveryAssignment(creep);
+    return { target: extTarget, reason: STRUCTURE_EXTENSION };
+  }
+
+  // 4. Tower (needs energy)
+  const towerTarget = findTower(creep);
+  if (towerTarget) {
+    logistics.clearDeliveryAssignment(creep);
+    return { target: towerTarget, reason: STRUCTURE_TOWER };
+  }
+
+  // 5. Upgrade container (normal, non-emergency)
   if (!state.recovery && (state.upgraderWorkTarget || 0) > 0) {
     const controllerContainer = economy.getControllerContainer(creep.room);
     const controllerRequest = logistics.getControllerDeliveryRequest(
@@ -199,31 +245,11 @@ function findEnergyTarget(creep) {
     if (controllerRequest) return controllerRequest;
   }
 
-  const spawnTarget = findSpawnOrExtension(creep);
-  if (spawnTarget) {
-    logistics.clearDeliveryAssignment(creep);
-    return {
-      target: spawnTarget,
-      reason: spawnTarget.structureType
-    };
-  }
-
-  const towerTarget = findTower(creep);
-  if (towerTarget) {
-    logistics.clearDeliveryAssignment(creep);
-    return {
-      target: towerTarget,
-      reason: towerTarget.structureType
-    };
-  }
-
+  // 6. Storage (last resort)
   logistics.clearDeliveryAssignment(creep);
   const storage = findStorage(creep);
   return storage
-    ? {
-        target: storage,
-        reason: storage.structureType
-      }
+    ? { target: storage, reason: STRUCTURE_STORAGE }
     : null;
 }
 
