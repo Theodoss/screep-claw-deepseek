@@ -252,6 +252,15 @@ function run(room, options) {
 
   if (!maintainSupport) return false;
 
+  // When energy is below 50% of capacity, skip support spawns
+  // (builder/upgrader) so extensions can refill.  This prevents
+  // spawning basic [W,C,M] bodies during RCL transitions when
+  // high-cost hauler/miner replacements have just drained energy.
+  // Once extensions refill past 50%, we get bigger bodies.
+  if (room.energyAvailable < room.energyCapacityAvailable * 0.5) {
+    return false;
+  }
+
   const emergencyBuilderTarget = emergencyRepair
     ? Math.max(1, builderTarget)
     : 0;
