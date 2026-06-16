@@ -417,8 +417,8 @@ function getPlan(rcl, context) {
       builderLimit
     ),
     rcl1Upgrader: createRole(
-      upgraderWorkTarget >= 10 ? 2 : (upgraderWorkTarget > 0 ? 1 : 0),
-      config.upgraderMax
+      upgraderWorkTarget >= 20 ? 4 : (upgraderWorkTarget >= 15 ? 3 : (upgraderWorkTarget >= 10 ? 2 : (upgraderWorkTarget > 0 ? 1 : 0))),
+      Math.max(config.upgraderMax, upgraderWorkTarget >= 20 ? 4 : (upgraderWorkTarget >= 15 ? 3 : 0))
     ),
     guard: createRole(
       input.hostilesCount > 0 ? config.guardMax : 0,
