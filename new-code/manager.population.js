@@ -413,8 +413,8 @@ function getPlan(rcl, context) {
     rcl2Miner: createRole(minerTarget, minerLimit),
     rcl2Hauler: createRole(haulerTarget, haulerLimit),
     rcl1Builder: createRole(
-      needsBuilder ? builderLimit : 0,
-      builderLimit
+      Math.min(3, Math.max(0, Math.ceil((input.constructionCount || 0) / 5))),
+      Math.min(3, Math.max(1, Math.ceil((input.constructionCount || 0) / 5)))
     ),
     rcl1Upgrader: createRole(
       Math.min(3, upgraderWorkTarget >= 20 ? 4 : (upgraderWorkTarget >= 15 ? 3 : (upgraderWorkTarget >= 10 ? 2 : (upgraderWorkTarget > 0 ? 1 : 0)))),
