@@ -1,9 +1,10 @@
 const SOURCE_ENERGY_PER_TICK = 10;
 const CARRY_CAPACITY_PER_PART = 50;
-const HAULER_SET_COST = 150;
-const HAULER_SET_PARTS = 3;
+const HAULER_SET_COST = 200;
+const HAULER_SET_PARTS = 4;
+const CARRIES_PER_HAULER_SET = 3;
 const HAULER_THROUGHPUT_MARGIN = 1.1;
-const MIN_HAULER_CARRY_PARTS = 6;
+const MIN_HAULER_CARRY_PARTS = 12;
 const DEFAULT_SOURCE_DISTANCE = 10;
 
 function getBodyCost(body) {
@@ -14,39 +15,21 @@ function getBodyCost(body) {
 }
 
 function buildStaticUpgraderBody(energyCapacity, desiredWork) {
-  // Find the (WORK, CARRY, MOVE) combination within budget that maximizes
-  // effective upgrade throughput. Key insight: each WORK part generates
-  // 1 fatigue/tick while upgrading, and each MOVE clears 2 fatigue/tick.
-  // The old [WORK×N, CARRY, MOVE] formula gave oversized WORK counts
-  // with only 1 MOVE, making the creep crawl after 5 ticks of upgrading.
-  // Now we balance to achieve zero net fatigue with adequate carry capacity
-  // so the upgrader spends ~80% of its time upgrading, not refilling.
-  const maxWork = Math.min(48, Math.max(1, desiredWork || 1));
-  let bestConfig = { w: 1, c: 1, m: 1, effective: 0 };
-  const REFILL_COST = 8; // Approximate ticks per refill trip (walk + withdraw)
-
-  for (let w = maxWork; w >= 1; w--) {
-    for (let c = 1; c <= 16; c++) {
-      const m = Math.ceil((w + c) / 2);
-      const cost = w * BODYPART_COST[WORK] +
-        c * BODYPART_COST[CARRY] +
-        m * BODYPART_COST[MOVE];
-      if (cost > energyCapacity) continue;
-
-      const upgradeTicks = (c * CARRY_CAPACITY_PER_PART) / w;
-      const uptime = upgradeTicks / (upgradeTicks + REFILL_COST);
-      const effective = w * uptime;
-
-      if (effective > bestConfig.effective) {
-        bestConfig = { w, c, m, effective };
-      }
-    }
-  }
+  // Upgraders feed from a nearby controller container (1-tile trip).
+  // Maximize WORK; just 1 CARRY + 1 MOVE is enough. Extra CARRY/MOVE
+  // wastes energy that could go into more WORK parts.
+  const affordableWork = Math.max(
+    1,
+    Math.floor(
+      (energyCapacity - BODYPART_COST[CARRY] - BODYPART_COST[MOVE]) /
+      BODYPART_COST[WORK]
+    )
+  );
+  const workParts = Math.min(48, affordableWork, desiredWork || 1);
 
   const body = [];
-  for (let i = 0; i < bestConfig.w; i++) body.push(WORK);
-  for (let i = 0; i < bestConfig.c; i++) body.push(CARRY);
-  for (let i = 0; i < bestConfig.m; i++) body.push(MOVE);
+  for (let index = 0; index < workParts; index++) body.push(WORK);
+  body.push(CARRY, MOVE);
   return body;
 }
 
@@ -76,7 +59,7 @@ function getMaxHaulerCarryParts(energyCapacity) {
     Math.floor(energyCapacity / HAULER_SET_COST)
   );
   const maxSets = Math.floor(50 / HAULER_SET_PARTS);
-  return Math.min(affordableSets, maxSets) * 2;
+  return Math.min(affordableSets, maxSets) * CARRIES_PER_HAULER_SET;
 }
 
 function getHaulerPlan(
@@ -110,18 +93,18 @@ function getHaulerPlan(
   const carryPartsPerHauler = Math.ceil(
     targetCarryParts / targetCount
   );
-  const desiredSets = Math.max(1, Math.ceil(carryPartsPerHauler / 2));
-  const sets = Math.min(desiredSets, maxCarryParts / 2);
+  const desiredSets = Math.max(1, Math.ceil(carryPartsPerHauler / CARRIES_PER_HAULER_SET));
+  const sets = Math.min(desiredSets, maxCarryParts / CARRIES_PER_HAULER_SET);
   const body = [];
 
   for (let index = 0; index < sets; index++) {
-    body.push(CARRY, CARRY, MOVE);
+    body.push(CARRY, CARRY, CARRY, MOVE);
   }
 
   return {
     body: body,
     bodyCost: getBodyCost(body),
-    bodyCarryParts: sets * 2,
+    bodyCarryParts: sets * CARRIES_PER_HAULER_SET,
     maxCarryParts: maxCarryParts,
     requiredCarryParts: requiredCarryParts,
     targetCarryParts: targetCarryParts,
