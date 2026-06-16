@@ -186,6 +186,19 @@ function findEnergyTarget(creep) {
     if (emergencyRequest) return emergencyRequest;
   }
 
+  // Upgrade containers: deliver here before spawn/extensions so
+  // upgraders always have a nearby energy source.
+  if (!state.recovery && (state.upgraderWorkTarget || 0) > 0) {
+    const controllerContainer = economy.getControllerContainer(creep.room);
+    const controllerRequest = logistics.getControllerDeliveryRequest(
+      creep,
+      controllerContainer,
+      state,
+      false
+    );
+    if (controllerRequest) return controllerRequest;
+  }
+
   const spawnTarget = findSpawnOrExtension(creep);
   if (spawnTarget) {
     logistics.clearDeliveryAssignment(creep);
@@ -202,17 +215,6 @@ function findEnergyTarget(creep) {
       target: towerTarget,
       reason: towerTarget.structureType
     };
-  }
-
-  if (!state.recovery && (state.upgraderWorkTarget || 0) > 0) {
-    const controllerContainer = economy.getControllerContainer(creep.room);
-    const controllerRequest = logistics.getControllerDeliveryRequest(
-      creep,
-      controllerContainer,
-      state,
-      false
-    );
-    if (controllerRequest) return controllerRequest;
   }
 
   logistics.clearDeliveryAssignment(creep);

@@ -327,54 +327,40 @@ function recordUpgrade(room, amount) {
   }
 }
 
-function getControllerContainer(room) {
-  if (!room.controller) return null;
+const UPGRADE_CONTAINER_RANGE = 4;
 
-  const roomMemory = Memory.rooms && Memory.rooms[room.name]
-    ? Memory.rooms[room.name]
-    : {};
-  const sourceMemory = roomMemory.sources || {};
-  const sourceContainerIds = {};
+function getUpgradeContainers(room) {
+  // Returns all containers within UPGRADE_CONTAINER_RANGE tiles of
+  // the controller — including source containers that happen to be
+  // nearby. Upgraders pick from these; haulers deliver to them.
+  if (!room.controller) return [];
 
-  for (const sourceId in sourceMemory) {
-    const containerId = sourceMemory[sourceId].containerId;
-    if (containerId) sourceContainerIds[containerId] = true;
-  }
-
-  const accounting = ensureRoomMemory(room.name);
-  if (accounting.controllerContainerId) {
-    const remembered = Game.getObjectById(
-      accounting.controllerContainerId
-    );
-    if (
-      remembered &&
-      !sourceContainerIds[remembered.id] &&
-      remembered.pos.getRangeTo(room.controller) <= 3
-    ) {
-      return remembered;
+  return room.find(FIND_STRUCTURES, {
+    filter: function (structure) {
+      return (
+        structure.structureType === STRUCTURE_CONTAINER &&
+        structure.pos.getRangeTo(room.controller) <= UPGRADE_CONTAINER_RANGE
+      );
     }
-    delete accounting.controllerContainerId;
-  }
-
-  const containers = room.find(FIND_STRUCTURES, {
-    filter: structure =>
-      structure.structureType === STRUCTURE_CONTAINER &&
-      !sourceContainerIds[structure.id] &&
-      structure.pos.getRangeTo(room.controller) <= 3
   });
+}
+
+function getControllerContainer(room) {
+  const containers = getUpgradeContainers(room);
   if (containers.length === 0) return null;
 
+  // Prefer the container with the most energy so haulers and
+  // upgraders converge on a well-stocked target.
   let selected = containers[0];
-  for (const container of containers) {
+  for (let index = 1; index < containers.length; index++) {
     if (
-      container.pos.getRangeTo(room.controller) <
-      selected.pos.getRangeTo(room.controller)
+      containers[index].store.getUsedCapacity(RESOURCE_ENERGY) >
+      selected.store.getUsedCapacity(RESOURCE_ENERGY)
     ) {
-      selected = container;
+      selected = containers[index];
     }
   }
 
-  accounting.controllerContainerId = selected.id;
   return selected;
 }
 
@@ -382,6 +368,7 @@ module.exports = {
   canUpgrade: canUpgrade,
   controllerEmergency: controllerEmergency,
   getControllerContainer: getControllerContainer,
+  getUpgradeContainers: getUpgradeContainers,
   getState: getState,
   recordHarvest: recordHarvest,
   recordUpgrade: recordUpgrade,

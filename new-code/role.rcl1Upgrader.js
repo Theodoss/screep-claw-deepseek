@@ -48,24 +48,33 @@ module.exports = {
       return;
     }
 
-    // Preferred: controller container (skip if empty)
-    const controllerContainer = economy.getControllerContainer(creep.room);
+    // Preferred: any upgrade container (within 4 tiles of controller)
+    const upgradeContainers = economy.getUpgradeContainers(creep.room);
     if (
-      controllerContainer &&
       !economyState.recovery &&
-      controllerContainer.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      upgradeContainers.length > 0
     ) {
-      creep.memory.task = 'withdraw:controller-container';
-      const result = creep.withdraw(
-        controllerContainer,
-        RESOURCE_ENERGY
-      );
-      if (result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(controllerContainer, {
-          visualizePathStyle: { stroke: '#ffaa00' }
-        });
+      // Pick the fullest upgrade container
+      let selected = upgradeContainers[0];
+      for (let i = 1; i < upgradeContainers.length; i++) {
+        if (
+          upgradeContainers[i].store.getUsedCapacity(RESOURCE_ENERGY) >
+          selected.store.getUsedCapacity(RESOURCE_ENERGY)
+        ) {
+          selected = upgradeContainers[i];
+        }
       }
-      return;
+
+      if (selected.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        creep.memory.task = 'withdraw:upgrade-container';
+        const result = creep.withdraw(selected, RESOURCE_ENERGY);
+        if (result === ERR_NOT_IN_RANGE) {
+          creep.moveTo(selected, {
+            visualizePathStyle: { stroke: '#ffaa00' }
+          });
+        }
+        return;
+      }
     }
 
     // Recovery or low RCL: harvest directly from source
