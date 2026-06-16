@@ -19,8 +19,16 @@ module.exports = {
     for (const roomName in Game.rooms) {
       const room = Game.rooms[roomName];
       const creeps = room.find(FIND_MY_CREEPS);
-      const constructionSiteCount =
-        room.find(FIND_MY_CONSTRUCTION_SITES).length;
+      const constructionSites = room.find(FIND_MY_CONSTRUCTION_SITES);
+      const constructionSiteCount = constructionSites.length;
+      let remainingBuildWork = 0;
+      for (let i = 0; i < constructionSites.length; i++) {
+        remainingBuildWork += Math.max(
+          0,
+          constructionSites[i].progressTotal -
+            constructionSites[i].progress
+        );
+      }
       const hostileCount = room.find(FIND_HOSTILE_CREEPS).length;
       const roleCounts = {};
       const roomMemory = Memory.rooms && Memory.rooms[roomName]
@@ -102,6 +110,7 @@ module.exports = {
       ).length;
       const fallbackPlan = population.getPlan(controllerLevel, {
         constructionCount: constructionSiteCount,
+        remainingBuildWork: remainingBuildWork,
         controllerEmergency:
           !!economyAccounting.controllerEmergency,
         energyStarved: !!(

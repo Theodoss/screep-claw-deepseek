@@ -575,6 +575,12 @@ function run(room, state) {
   };
   const economyState = economy.update(room, {
     constructionCount: constructionSites.length,
+    remainingBuildWork: constructionSites.reduce(
+      function (sum, site) {
+        return sum + Math.max(0, site.progressTotal - site.progress);
+      },
+      0
+    ),
     energyStarved: state.energyStarved,
     haulersHealthy: haulersHealthy,
     hostilesCount: hostiles.length,
@@ -590,6 +596,12 @@ function run(room, state) {
     {
       roomName: room.name,
       constructionCount: constructionSites.length,
+      remainingBuildWork: constructionSites.reduce(
+        function (sum, site) {
+          return sum + Math.max(0, site.progressTotal - site.progress);
+        },
+        0
+      ),
       controllerEmergency: !!economyState.controllerEmergency,
       emergencyRepair: emergencyRepair,
       energyStarved: state.energyStarved,

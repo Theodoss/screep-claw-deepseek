@@ -173,6 +173,12 @@ function run(room, options) {
         room.controller.level >= 2 &&
         !containerEconomyReady,
       constructionCount: sites.length,
+      remainingBuildWork: sites.reduce(
+        function (sum, site) {
+          return sum + Math.max(0, site.progressTotal - site.progress);
+        },
+        0
+      ),
       controllerEmergency: !!(
         room.controller &&
         typeof room.controller.ticksToDowngrade === 'number' &&
