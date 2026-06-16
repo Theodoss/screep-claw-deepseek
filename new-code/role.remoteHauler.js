@@ -1,5 +1,6 @@
 const economy = require('manager.economy');
 const remote = require('manager.remote');
+const managerEconomy = require('manager.economy');
 
 function closestTarget(creep, targets) {
   if (targets.length === 0) return null;
@@ -88,8 +89,11 @@ function deliver(creep) {
     return;
   }
 
+  const carried = creep.store.getUsedCapacity(RESOURCE_ENERGY);
   const result = creep.transfer(target, RESOURCE_ENERGY);
-  if (result === ERR_NOT_IN_RANGE) {
+  if (result === OK) {
+    managerEconomy.recordHarvest(creep.memory.homeRoom, carried);
+  } else if (result === ERR_NOT_IN_RANGE) {
     creep.moveTo(target, { reusePath: 10 });
   }
 }

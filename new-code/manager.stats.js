@@ -108,6 +108,23 @@ module.exports = {
       const plannedUpgraderWork = plannedUpgraderBody.filter(
         part => part === WORK
       ).length;
+      // Remote program context for this room
+      const remoteHomeCfg = Memory.remote && Memory.remote[roomName];
+      const remoteRoomsCfg = remoteHomeCfg && remoteHomeCfg.rooms ? remoteHomeCfg.rooms : {};
+      let remoteRoomCnt = 0;
+      let remoteSourceCnt = 0;
+      for (const rn in remoteRoomsCfg) {
+        const rc = remoteRoomsCfg[rn];
+        if (!rc || rc.enabled === false) continue;
+        remoteRoomCnt++;
+        if (Array.isArray(rc.sources)) {
+          remoteSourceCnt += rc.sources.filter(function (s) {
+            return s && s.enabled !== false && s.x !== null && s.y !== null;
+          }).length;
+        }
+      }
+      const remoteActive = remoteRoomCnt > 0;
+
       const fallbackPlan = population.getPlan(controllerLevel, {
         constructionCount: constructionSiteCount,
         remainingBuildWork: remainingBuildWork,
@@ -120,6 +137,9 @@ module.exports = {
         hostilesCount: hostileCount,
         noCreeps: creeps.length === 0,
         readySourceCount: readySourceCount,
+        remoteRoomCount: remoteRoomCnt,
+        remoteSourceCount: remoteSourceCnt,
+        remoteProgramActive: remoteActive,
         sourceCount: sources.length,
         sourceSlots: slotStats.totalSlots,
         uncoveredSourceCount: sources.length - readySourceCount,

@@ -526,12 +526,33 @@ function run(room, state) {
   const controllerLevel = room.controller ? room.controller.level : 2;
   const sourceCount =
     state.readySources.length + state.uncoveredSources.length;
+
+  // Count active remote rooms and sources for population plan
+  const remoteHome = Memory.remote && Memory.remote[room.name];
+  const remoteRoomsConfig = remoteHome && remoteHome.rooms ? remoteHome.rooms : {};
+  let remoteRoomCount = 0;
+  let remoteSourceCount = 0;
+  for (const rn in remoteRoomsConfig) {
+    const rc = remoteRoomsConfig[rn];
+    if (!rc || rc.enabled === false) continue;
+    remoteRoomCount++;
+    if (Array.isArray(rc.sources)) {
+      remoteSourceCount += rc.sources.filter(function (s) {
+        return s && s.enabled !== false && s.x !== null && s.y !== null;
+      }).length;
+    }
+  }
+  const remoteProgramActive = remoteRoomCount > 0;
+
   const capacityPlan = population.getPlan(
     controllerLevel,
     {
       readySourceCount: state.readySources.length,
       sourceCount: sourceCount,
-      uncoveredSourceCount: state.uncoveredSources.length
+      uncoveredSourceCount: state.uncoveredSources.length,
+      remoteRoomCount: remoteRoomCount,
+      remoteSourceCount: remoteSourceCount,
+      remoteProgramActive: remoteProgramActive
     }
   );
   const requiredHaulers = population.getRole(
@@ -612,6 +633,9 @@ function run(room, state) {
       minersHealthy: minersHealthy,
       noCreeps: creeps.length === 0,
       readySourceCount: state.readySources.length,
+      remoteRoomCount: remoteRoomCount,
+      remoteSourceCount: remoteSourceCount,
+      remoteProgramActive: remoteProgramActive,
       selfHarvestMissing:
         haulers.length === 0 && rcl1Harvesters.length === 0,
       sourceCount: sourceCount,
