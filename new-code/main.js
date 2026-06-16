@@ -10,11 +10,13 @@ const roleRemoteHauler = require('role.remoteHauler');
 const roleRemoteBuilder = require('role.remoteBuilder');
 const roleReserver = require('role.reserver');
 const roleGuard = require('role.guard');
+const roleRemoteGuard = require('role.remoteGuard');
 const roleSquadMelee = require('role.squadMelee');
 const roleSquadHealer = require('role.squadHealer');
 const roleSquadRanged = require('role.squadRanged');
 const military = require('manager.military');
 const remote = require('manager.remote');
+const remoteDefense = require('manager.remoteDefense');
 const stats = require('manager.stats');
 const intel = require('manager.intel');
 const errorReporter = require('core.errorReporter');
@@ -41,6 +43,7 @@ const ROLE_MODULES = {
   remoteBuilder: roleRemoteBuilder,
   reserver: roleReserver,
   guard: roleGuard,
+  remoteGuard: roleRemoteGuard,
   squadMelee: roleSquadMelee,
   squadHealer: roleSquadHealer,
   squadRanged: roleSquadRanged
@@ -170,7 +173,30 @@ module.exports.loop = function () {
 
   // Remote spawning runs after every home manager has had first use of spawn.
   try {
+    remoteDefense.run();
     remote.run();
+
+    // Defense spawn requests: try after remote spawns
+    const defenseRequests = remoteDefense.getAllSpawnRequests('W49N25');
+    if (defenseRequests.length > 0) {
+      const homeRoom = Game.rooms['W49N25'];
+      if (!homeRoom) {
+        // skip
+      } else {
+        const spawn = homeRoom.find(FIND_MY_SPAWNS)[0];
+        if (spawn && !spawn.spawning) {
+          const req = defenseRequests[0];
+          if (homeRoom.energyAvailable >= req.bodyCost) {
+            const result = spawn.spawnCreep(req.body, req.name, {
+              memory: req.memory
+            });
+            if (result === OK) {
+              console.log('[defense] spawned ' + req.name);
+            }
+          }
+        }
+      }
+    }
   } catch (err) {
     errorReporter.capture(err, {
       module: 'manager.remote'

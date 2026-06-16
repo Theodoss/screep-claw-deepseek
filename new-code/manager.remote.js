@@ -138,6 +138,8 @@ function isRemotePaused(homeRoomName, remoteRoomName) {
   if (!homeConfig || homeConfig.enabled !== true) return true;
   if (!remoteConfig || remoteConfig.enabled !== true) return true;
   if (remoteConfig.status === 'danger') return true;
+  // Threat detected by defense system — pause remote operations
+  if (remoteConfig.threat) return true;
   return (remoteConfig.pauseUntil || 0) > Game.time;
 }
 
