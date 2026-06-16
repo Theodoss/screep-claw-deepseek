@@ -17,6 +17,10 @@ const REMOTE_ROOMS = {
   W48N25: [
     { id: null, x: 29, y: 23, roomName: 'W48N25', containerX: 29, containerY: 22, enabled: true },
     { id: null, x: 41, y: 3, roomName: 'W48N25', containerX: 42, containerY: 3, enabled: true }
+  ],
+  W48N26: [
+    { id: null, x: 12, y: 38, roomName: 'W48N26', containerX: 11, containerY: 38, enabled: true },
+    { id: null, x: 41, y: 39, roomName: 'W48N26', containerX: 40, containerY: 38, enabled: true }
   ]
 };
 
