@@ -1,8 +1,9 @@
 const remote = require('manager.remote');
 
-function getRemoteWork(remoteConfig) {
+function getRemoteWork(creep, remoteConfig) {
   if (!remoteConfig || !Array.isArray(remoteConfig.sources)) return null;
 
+  // 1. Container construction sites
   for (let index = 0; index < remoteConfig.sources.length; index++) {
     const sourceConfig = remoteConfig.sources[index];
     if (!sourceConfig || sourceConfig.enabled !== true) continue;
@@ -20,6 +21,23 @@ function getRemoteWork(remoteConfig) {
     }
   }
 
+  // 2. Road construction sites
+  const roadSites = creep.room.find(FIND_CONSTRUCTION_SITES, {
+    filter: function (site) {
+      return site.structureType === STRUCTURE_ROAD;
+    }
+  });
+  if (roadSites.length > 0) {
+    const closest = creep.pos.findClosestByPath(roadSites) ||
+      creep.pos.findClosestByRange(roadSites) ||
+      roadSites[0];
+    return {
+      target: closest,
+      type: 'build'
+    };
+  }
+
+  // 3. Container repairs
   for (let index = 0; index < remoteConfig.sources.length; index++) {
     const sourceConfig = remoteConfig.sources[index];
     if (!sourceConfig || sourceConfig.enabled !== true) continue;
@@ -294,7 +312,7 @@ module.exports = {
     return;
     }
 
-    const work = getRemoteWork(remoteConfig);
+    const work = getRemoteWork(creep, remoteConfig);
     if (!work) {
       retireToHomeBuilder(creep);
       return;

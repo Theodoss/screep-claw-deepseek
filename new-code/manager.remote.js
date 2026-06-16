@@ -15,7 +15,7 @@ const REMOTE_ROOMS = {
     { id: null, x: 23, y: 25, roomName: 'W49N26', containerX: 23, containerY: 24, enabled: true }
   ],
   W48N25: [
-    { id: null, x: 29, y: 23, roomName: 'W48N25', containerX: 29, containerY: 22, enabled: true },
+    { id: null, x: 28, y: 22, roomName: 'W48N25', containerX: 28, containerY: 22, enabled: true },
     { id: null, x: 41, y: 3, roomName: 'W48N25', containerX: 42, containerY: 3, enabled: true }
   ],
   W48N26: [
@@ -29,7 +29,7 @@ function getDefaultSources(roomName) {
 }
 
 function fillMissing(target, key, value) {
-  if (target[key] !== undefined) return false;
+  if (target[key] != null) return false;
   target[key] = value;
   return true;
 }
@@ -929,7 +929,6 @@ function getSpawnRequests(homeRoomName) {
     if (
       builderBody &&
       miners.length > 0 &&
-      haulers.length > 0 &&
       builders.length === 0 &&
       remoteNeedsBuilder(remoteRoomName, remoteConfig)
     ) {
