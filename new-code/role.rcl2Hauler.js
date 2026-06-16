@@ -74,7 +74,8 @@ function selectPickupContainer(creep) {
     const remembered = Game.getObjectById(creep.memory.containerId);
     if (
       remembered &&
-      remembered.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      remembered.store.getUsedCapacity(RESOURCE_ENERGY) >
+        remembered.store.getCapacity(RESOURCE_ENERGY) * 0.1
     ) {
       return remembered;
     }
@@ -85,15 +86,22 @@ function selectPickupContainer(creep) {
   const containers = getSourceContainers(creep);
   if (containers.length === 0) return null;
 
-  let selected = containers[0];
+  // Only consider containers with >10% energy.
+  // Below that, go to storage instead of waiting.
+  let selected = null;
   for (const container of containers) {
+    const energy = container.store.getUsedCapacity(RESOURCE_ENERGY);
+    const cap = container.store.getCapacity(RESOURCE_ENERGY);
+    if (energy <= cap * 0.1) continue;
     if (
-      container.store.getUsedCapacity(RESOURCE_ENERGY) >
-      selected.store.getUsedCapacity(RESOURCE_ENERGY)
+      !selected ||
+      energy > selected.store.getUsedCapacity(RESOURCE_ENERGY)
     ) {
       selected = container;
     }
   }
+
+  if (!selected) return null;
 
   creep.memory.containerId = selected.id;
   return selected;

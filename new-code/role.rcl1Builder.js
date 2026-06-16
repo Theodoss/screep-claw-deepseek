@@ -85,9 +85,30 @@ function acquireEnergy(creep) {
 
   const container = selectContainer(creep);
   if (container) {
-    const result = creep.withdraw(container, RESOURCE_ENERGY);
+    const energy = container.store.getUsedCapacity(RESOURCE_ENERGY);
+    const cap = container.store.getCapacity(RESOURCE_ENERGY);
+    // Only use container if it has >10% energy.
+    // Otherwise go to storage.
+    if (energy > cap * 0.1) {
+      const result = creep.withdraw(container, RESOURCE_ENERGY);
+      if (result === ERR_NOT_IN_RANGE) {
+        creep.moveTo(container, {
+          visualizePathStyle: { stroke: '#ffaa00' }
+        });
+      }
+      return;
+    }
+  }
+
+  // Storage fallback: use when containers are nearly empty
+  const storage = creep.room.storage;
+  if (
+    storage &&
+    storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+  ) {
+    const result = creep.withdraw(storage, RESOURCE_ENERGY);
     if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(container, {
+      creep.moveTo(storage, {
         visualizePathStyle: { stroke: '#ffaa00' }
       });
     }
@@ -126,10 +147,7 @@ module.exports = {
     }
 
     // If we're carrying meaningful energy and no easy sources are
-    // available (containers dry, no salvage), switch to working early
-    // instead of waiting to fill 100%.  Otherwise the builder wastes
-    // ticks trying to top off from nearly-empty containers while
-    // upgradeable energy goes unused.
+    // available (containers dry or <10%, no salvage), switch to working
     if (
       !creep.memory.working &&
       creep.store.getUsedCapacity(RESOURCE_ENERGY) >= 50
@@ -137,7 +155,11 @@ module.exports = {
       const salvage = selectSalvageTarget(creep);
       if (!salvage || !salvage.target) {
         const container = selectContainer(creep);
-        if (!container) {
+        const containerOk =
+          container &&
+          container.store.getUsedCapacity(RESOURCE_ENERGY) >
+            container.store.getCapacity(RESOURCE_ENERGY) * 0.1;
+        if (!containerOk) {
           creep.memory.working = true;
         }
       }
