@@ -74,8 +74,8 @@ function selectPickupContainer(creep) {
     const remembered = Game.getObjectById(creep.memory.containerId);
     if (
       remembered &&
-      remembered.store.getUsedCapacity(RESOURCE_ENERGY) >
-        remembered.store.getCapacity(RESOURCE_ENERGY) * 0.1
+      remembered.store.getUsedCapacity(RESOURCE_ENERGY) >=
+        creep.store.getFreeCapacity(RESOURCE_ENERGY) * 0.5
     ) {
       return remembered;
     }
@@ -89,10 +89,12 @@ function selectPickupContainer(creep) {
   // Only consider containers with >10% energy.
   // Below that, go to storage instead of waiting.
   let selected = null;
+  const minPickup = creep.store.getFreeCapacity(RESOURCE_ENERGY) * 0.5;
   for (const container of containers) {
     const energy = container.store.getUsedCapacity(RESOURCE_ENERGY);
-    const cap = container.store.getCapacity(RESOURCE_ENERGY);
-    if (energy <= cap * 0.1) continue;
+    // Skip containers that have less than half of what we can carry.
+    // No point walking across the room for a trickle.
+    if (energy < minPickup) continue;
     if (
       !selected ||
       energy > selected.store.getUsedCapacity(RESOURCE_ENERGY)

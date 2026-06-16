@@ -85,11 +85,9 @@ function acquireEnergy(creep) {
 
   const container = selectContainer(creep);
   if (container) {
-    const energy = container.store.getUsedCapacity(RESOURCE_ENERGY);
-    const cap = container.store.getCapacity(RESOURCE_ENERGY);
-    // Only use container if it has >10% energy.
-    // Otherwise go to storage.
-    if (energy > cap * 0.1) {
+    // Only use container if it has at least half of what we can carry
+    const minPickup = creep.store.getFreeCapacity(RESOURCE_ENERGY) * 0.5;
+    if (container.store.getUsedCapacity(RESOURCE_ENERGY) >= minPickup) {
       const result = creep.withdraw(container, RESOURCE_ENERGY);
       if (result === ERR_NOT_IN_RANGE) {
         creep.moveTo(container, {
@@ -157,8 +155,8 @@ module.exports = {
         const container = selectContainer(creep);
         const containerOk =
           container &&
-          container.store.getUsedCapacity(RESOURCE_ENERGY) >
-            container.store.getCapacity(RESOURCE_ENERGY) * 0.1;
+          container.store.getUsedCapacity(RESOURCE_ENERGY) >=
+            creep.store.getFreeCapacity(RESOURCE_ENERGY) * 0.5;
         if (!containerOk) {
           creep.memory.working = true;
         }
