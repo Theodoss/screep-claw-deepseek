@@ -3,6 +3,8 @@ const REMOTE_ROOM = 'W49N26';
 const DANGER_PAUSE_TICKS = 1500;
 const REMOTE_STABLE_TICKS = 100;
 const TOWER_LOW_ENERGY = 400;
+const REMOTE_ROAD_SITE_INTERVAL = 25;
+const REMOTE_ROAD_MAX_ACTIVE_SITES = 3;
 
 const DEFAULT_SOURCES = [
   {
@@ -171,6 +173,210 @@ function findContainerSiteAt(roomName, x, y) {
   }
 
   return null;
+}
+
+function findRoadAt(roomName, x, y) {
+  const structures = getPositionLook(roomName, x, y, LOOK_STRUCTURES);
+
+  for (let index = 0; index < structures.length; index++) {
+    if (structures[index].structureType === STRUCTURE_ROAD) {
+      return structures[index];
+    }
+  }
+
+  return null;
+}
+
+function findRoadSiteAt(roomName, x, y) {
+  const sites = getPositionLook(roomName, x, y, LOOK_CONSTRUCTION_SITES);
+
+  for (let index = 0; index < sites.length; index++) {
+    if (sites[index].structureType === STRUCTURE_ROAD) {
+      return sites[index];
+    }
+  }
+
+  return null;
+}
+
+function buildRemoteRoadMatrix(roomName) {
+  const room = Game.rooms[roomName];
+  if (!room) return false;
+
+  const terrain = Game.map.getRoomTerrain(roomName);
+  const matrix = new PathFinder.CostMatrix();
+
+  for (let x = 0; x < 50; x++) {
+    for (let y = 0; y < 50; y++) {
+      if (terrain.get(x, y) === TERRAIN_MASK_WALL) {
+        matrix.set(x, y, 255);
+      } else {
+        matrix.set(x, y, 2);
+      }
+    }
+  }
+
+  const structures = room.find(FIND_STRUCTURES);
+  for (let index = 0; index < structures.length; index++) {
+    const structure = structures[index];
+    if (structure.structureType === STRUCTURE_ROAD) {
+      matrix.set(structure.pos.x, structure.pos.y, 1);
+      continue;
+    }
+    if (
+      structure.structureType === STRUCTURE_CONTAINER ||
+      structure.structureType === STRUCTURE_RAMPART
+    ) {
+      continue;
+    }
+    matrix.set(structure.pos.x, structure.pos.y, 255);
+  }
+
+  const sites = room.find(FIND_CONSTRUCTION_SITES);
+  for (let index = 0; index < sites.length; index++) {
+    const site = sites[index];
+    if (
+      site.structureType === STRUCTURE_ROAD ||
+      site.structureType === STRUCTURE_CONTAINER
+    ) {
+      continue;
+    }
+    matrix.set(site.pos.x, site.pos.y, 255);
+  }
+
+  return matrix;
+}
+
+function countActiveConstructionSites(roomNames) {
+  let count = 0;
+
+  for (let index = 0; index < roomNames.length; index++) {
+    const room = Game.rooms[roomNames[index]];
+    if (!room) continue;
+    count += room.find(FIND_CONSTRUCTION_SITES).length;
+  }
+
+  return count;
+}
+
+function getRemoteRoadOrigin(homeRoomName) {
+  const room = Game.rooms[homeRoomName];
+  if (!room) return null;
+
+  if (room.storage) return room.storage.pos;
+
+  const spawn = getHomeSpawn(room);
+  return spawn ? spawn.pos : null;
+}
+
+function ensureRemoteRoad(sourceConfig, homeRoomName) {
+  const origin = getRemoteRoadOrigin(homeRoomName);
+  const targetRoom = Game.rooms[sourceConfig.roomName];
+  const homeRoom = Game.rooms[homeRoomName];
+
+  if (!origin || !homeRoom || !targetRoom) return false;
+  if (
+    countActiveConstructionSites([homeRoomName, sourceConfig.roomName]) >=
+    REMOTE_ROAD_MAX_ACTIVE_SITES
+  ) {
+    return false;
+  }
+
+  const target = new RoomPosition(
+    sourceConfig.containerX,
+    sourceConfig.containerY,
+    sourceConfig.roomName
+  );
+  const result = PathFinder.search(
+    origin,
+    { pos: target, range: 1 },
+    {
+      maxRooms: 2,
+      maxOps: 4000,
+      plainCost: 2,
+      swampCost: 10,
+      roomCallback: function (roomName) {
+        if (!Game.rooms[roomName]) return false;
+        return buildRemoteRoadMatrix(roomName);
+      }
+    }
+  );
+  if (result.incomplete || result.path.length === 0) return false;
+
+  for (let index = 0; index < result.path.length; index++) {
+    const step = result.path[index];
+    if (
+      step.x === origin.x &&
+      step.y === origin.y &&
+      step.roomName === origin.roomName
+    ) {
+      continue;
+    }
+    if (
+      step.x === sourceConfig.containerX &&
+      step.y === sourceConfig.containerY &&
+      step.roomName === sourceConfig.roomName
+    ) {
+      continue;
+    }
+    if (findRoadAt(step.roomName, step.x, step.y)) continue;
+    if (findRoadSiteAt(step.roomName, step.x, step.y)) continue;
+    if (findContainerAt(step.roomName, step.x, step.y)) continue;
+    if (findContainerSiteAt(step.roomName, step.x, step.y)) continue;
+
+    const room = Game.rooms[step.roomName];
+    if (!room) continue;
+
+    const createResult = room.createConstructionSite(
+      step.x,
+      step.y,
+      STRUCTURE_ROAD
+    );
+    if (createResult === OK) {
+      console.log(
+        '[remote] road site created ' + step.roomName + ' ' + step.x + ',' + step.y
+      );
+      return true;
+    }
+    if (createResult !== ERR_FULL) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function planRemoteRoads(homeRoomName, remoteRoomName, remoteConfig) {
+  if (Game.time % REMOTE_ROAD_SITE_INTERVAL !== 0) return false;
+  if (isRemotePaused(homeRoomName, remoteRoomName)) return false;
+  if (!remoteConfig || !Array.isArray(remoteConfig.sources)) return false;
+  if (!Game.rooms[remoteRoomName] || !Game.rooms[homeRoomName]) return false;
+
+  for (let index = 0; index < remoteConfig.sources.length; index++) {
+    const sourceConfig = remoteConfig.sources[index];
+    if (!sourceConfig || sourceConfig.enabled !== true) continue;
+    if (!findContainerAt(
+      remoteRoomName,
+      sourceConfig.containerX,
+      sourceConfig.containerY
+    )) {
+      continue;
+    }
+
+    const haulers = getAssignedCreeps(
+      'remoteHauler',
+      homeRoomName,
+      remoteRoomName,
+      index
+    );
+    if (haulers.length === 0) continue;
+
+    if (ensureRemoteRoad(sourceConfig, homeRoomName)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function ensureContainerSite(sourceConfig) {
@@ -748,15 +954,16 @@ function getSpawnRequests(homeRoomName) {
     const reserverReplacementLead = reserverBody
       ? reserverBody.length * CREEP_SPAWN_TIME + 150
       : 0;
-    // Spawn a new reserver when there's no healthy one.
-    // reservationLow gates the INITIAL spawn only; once a reserver
-    // exists we replace by TTL to avoid reservation gaps.
+    // Spawn a reserver only when reservation is at risk (ticksToEnd < 2000).
+    // We don't pre-replace healthy reservers — that causes double-spawning.
+    // A reserver with 600 TTL will live 900 more ticks, well past the
+    // ~156 tick replacement lead. Only spawn when the controller actually
+    // needs it.
     if (
       reserverBody &&
       stable &&
       controller &&
-      !hasHealthyAssignedCreep(reservers, reserverReplacementLead) &&
-      (reservationLow || reservers.length > 0)
+      reservationLow
     ) {
       requests.push({
         role: 'reserver',
@@ -822,6 +1029,11 @@ function run() {
       remoteRoomName,
       homeConfig.rooms[remoteRoomName]
     );
+    planRemoteRoads(
+      HOME_ROOM,
+      remoteRoomName,
+      homeConfig.rooms[remoteRoomName]
+    );
   }
 
   const requests = getSpawnRequests(HOME_ROOM);
@@ -854,6 +1066,9 @@ module.exports = {
   ensureContainerSite: ensureContainerSite,
   findContainerAt: findContainerAt,
   findContainerSiteAt: findContainerSiteAt,
+  findRoadAt: findRoadAt,
+  findRoadSiteAt: findRoadSiteAt,
+  ensureRemoteRoad: ensureRemoteRoad,
   getRemoteConfig: getRemoteConfig,
   getSourceConfig: getSourceConfig,
   getSpawnRequests: getSpawnRequests,
