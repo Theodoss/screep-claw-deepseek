@@ -6,26 +6,22 @@ const TOWER_LOW_ENERGY = 400;
 const REMOTE_ROAD_SITE_INTERVAL = 25;
 const REMOTE_ROAD_MAX_ACTIVE_SITES = 3;
 
-const DEFAULT_SOURCES = [
-  {
-    id: null,
-    x: 16,
-    y: 26,
-    roomName: REMOTE_ROOM,
-    containerX: 16,
-    containerY: 25,
-    enabled: true
-  },
-  {
-    id: null,
-    x: 23,
-    y: 25,
-    roomName: REMOTE_ROOM,
-    containerX: 23,
-    containerY: 24,
-    enabled: true
-  }
-];
+// Each remote room has its own source list.  x/y = source position,
+// containerX/Y = where the container should go (adjacent non-wall tile).
+// Sources and containers are discovered on first creep entry.
+const REMOTE_ROOMS = {
+  W49N26: [
+    { id: null, x: 16, y: 26, roomName: 'W49N26', containerX: 16, containerY: 25, enabled: true },
+    { id: null, x: 23, y: 25, roomName: 'W49N26', containerX: 23, containerY: 24, enabled: true }
+  ],
+  W48N25: [
+    { id: null, x: null, y: null, roomName: 'W48N25', containerX: null, containerY: null, enabled: true }
+  ]
+};
+
+function getDefaultSources(roomName) {
+  return REMOTE_ROOMS[roomName] || [];
+}
 
 function fillMissing(target, key, value) {
   if (target[key] !== undefined) return false;
@@ -68,37 +64,42 @@ function initMemory() {
     homeConfig.rooms = {};
     changed = true;
   }
-  if (
-    !homeConfig.rooms[REMOTE_ROOM] ||
-    typeof homeConfig.rooms[REMOTE_ROOM] !== 'object'
-  ) {
-    homeConfig.rooms[REMOTE_ROOM] = {};
-    changed = true;
-  }
 
-  const remoteConfig = homeConfig.rooms[REMOTE_ROOM];
-  changed = fillMissing(remoteConfig, 'enabled', true) || changed;
-  changed = fillMissing(remoteConfig, 'status', 'active') || changed;
-  changed = fillMissing(remoteConfig, 'pauseUntil', 0) || changed;
-  changed = fillMissing(remoteConfig, 'controllerId', null) || changed;
-
-  if (!Array.isArray(remoteConfig.sources)) {
-    remoteConfig.sources = [];
-    changed = true;
-  }
-
-  for (let index = 0; index < DEFAULT_SOURCES.length; index++) {
+  // Initialize every configured remote room
+  for (const roomName in REMOTE_ROOMS) {
     if (
-      !remoteConfig.sources[index] ||
-      typeof remoteConfig.sources[index] !== 'object'
+      !homeConfig.rooms[roomName] ||
+      typeof homeConfig.rooms[roomName] !== 'object'
     ) {
-      remoteConfig.sources[index] = {};
+      homeConfig.rooms[roomName] = {};
       changed = true;
     }
-    changed = fillSourceMissing(
-      remoteConfig.sources[index],
-      DEFAULT_SOURCES[index]
-    ) || changed;
+
+    const remoteConfig = homeConfig.rooms[roomName];
+    changed = fillMissing(remoteConfig, 'enabled', true) || changed;
+    changed = fillMissing(remoteConfig, 'status', 'active') || changed;
+    changed = fillMissing(remoteConfig, 'pauseUntil', 0) || changed;
+    changed = fillMissing(remoteConfig, 'controllerId', null) || changed;
+
+    if (!Array.isArray(remoteConfig.sources)) {
+      remoteConfig.sources = [];
+      changed = true;
+    }
+
+    const defaults = getDefaultSources(roomName);
+    for (let index = 0; index < defaults.length; index++) {
+      if (
+        !remoteConfig.sources[index] ||
+        typeof remoteConfig.sources[index] !== 'object'
+      ) {
+        remoteConfig.sources[index] = {};
+        changed = true;
+      }
+      changed = fillSourceMissing(
+        remoteConfig.sources[index],
+        defaults[index]
+      ) || changed;
+    }
   }
 
   if (changed) {
@@ -830,7 +831,14 @@ function getSpawnRequests(homeRoomName) {
 
     for (let index = 0; index < remoteConfig.sources.length; index++) {
       const sourceConfig = remoteConfig.sources[index];
-      if (!sourceConfig || sourceConfig.enabled !== true || !minerBody) {
+      // Skip sources without known positions (not yet scouted)
+      if (
+        !sourceConfig ||
+        sourceConfig.enabled !== true ||
+        sourceConfig.x === null ||
+        sourceConfig.y === null ||
+        !minerBody
+      ) {
         continue;
       }
 
@@ -855,7 +863,14 @@ function getSpawnRequests(homeRoomName) {
 
     for (let index = 0; index < remoteConfig.sources.length; index++) {
       const sourceConfig = remoteConfig.sources[index];
-      if (!sourceConfig || sourceConfig.enabled !== true || !haulerBody) {
+      // Skip sources without known positions (not yet scouted)
+      if (
+        !sourceConfig ||
+        sourceConfig.enabled !== true ||
+        sourceConfig.x === null ||
+        sourceConfig.y === null ||
+        !haulerBody
+      ) {
         continue;
       }
       if (!findContainerAt(
@@ -1063,11 +1078,11 @@ module.exports = {
   REMOTE_ROOM: REMOTE_ROOM,
   TOWER_LOW_ENERGY: TOWER_LOW_ENERGY,
   ensureContainerSite: ensureContainerSite,
+  ensureRemoteRoad: ensureRemoteRoad,
   findContainerAt: findContainerAt,
   findContainerSiteAt: findContainerSiteAt,
   findRoadAt: findRoadAt,
   findRoadSiteAt: findRoadSiteAt,
-  ensureRemoteRoad: ensureRemoteRoad,
   getRemoteConfig: getRemoteConfig,
   getSourceConfig: getSourceConfig,
   getSpawnRequests: getSpawnRequests,
