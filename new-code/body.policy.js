@@ -16,20 +16,32 @@ function getBodyCost(body) {
 
 function buildStaticUpgraderBody(energyCapacity, desiredWork) {
   // Upgraders feed from a nearby controller container (1-tile trip).
-  // Maximize WORK; just 1 CARRY + 1 MOVE is enough. Extra CARRY/MOVE
-  // wastes energy that could go into more WORK parts.
-  const affordableWork = Math.max(
-    1,
-    Math.floor(
-      (energyCapacity - BODYPART_COST[CARRY] - BODYPART_COST[MOVE]) /
-      BODYPART_COST[WORK]
-    )
-  );
-  const workParts = Math.min(48, affordableWork, desiredWork || 1);
+  // Old layout [W×N,C,M] had only 1 MOVE → glacial movement (~10 ticks
+  // to cross 1 tile on road with 19 body parts).  Duty cycle ~23%.
+  // New layout: 2 CARRY for longer refill intervals, MOVE proportional
+  // to body size for ~1 tick/tile road movement.  Targets ~70%+ duty.
+  const carryParts = 2;
+  let workParts = Math.min(48, desiredWork || 1);
+
+  // Walk down from the desired WORK count until the full
+  // [WORK^N, CARRY^C, MOVE^ceil((N+C)/2)] layout fits the budget.
+  while (workParts > 0) {
+    const moveParts = Math.ceil((workParts + carryParts) / 2);
+    const cost =
+      workParts * BODYPART_COST[WORK] +
+      carryParts * BODYPART_COST[CARRY] +
+      moveParts * BODYPART_COST[MOVE];
+    if (cost <= energyCapacity) break;
+    workParts--;
+  }
+
+  const finalWork = Math.max(1, workParts);
+  const finalMove = Math.ceil((finalWork + carryParts) / 2);
 
   const body = [];
-  for (let index = 0; index < workParts; index++) body.push(WORK);
-  body.push(CARRY, MOVE);
+  for (let index = 0; index < finalWork; index++) body.push(WORK);
+  for (let index = 0; index < carryParts; index++) body.push(CARRY);
+  for (let index = 0; index < finalMove; index++) body.push(MOVE);
   return body;
 }
 
