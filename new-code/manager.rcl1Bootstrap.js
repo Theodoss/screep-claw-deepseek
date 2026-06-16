@@ -302,7 +302,7 @@ function run(room, options) {
   // they expire, avoiding a work gap.  Raw count includes dying
   // creeps and would block replacement when count >= limit+1.
   if (
-    (upgraders.count - upgraders.dyingCount) < upgraderPolicy.limit + 1 &&
+    (upgraders.count - upgraders.dyingCount) < upgraderPolicy.limit &&
     upgraders.healthyWork < upgraderWorkTarget
   ) {
     trySpawn(
