@@ -160,24 +160,41 @@ function selectNearbySalvage(creep, sourceConfig) {
 }
 
 function collect(creep, sourceConfig) {
-  const containerPosition = new RoomPosition(
-    sourceConfig.containerX,
-    sourceConfig.containerY,
-    sourceConfig.roomName
+  var containerX = sourceConfig.containerX;
+  var containerY = sourceConfig.containerY;
+  var containerRoom = sourceConfig.roomName;
+  var containerPosition = new RoomPosition(
+    containerX,
+    containerY,
+    containerRoom
   );
 
-  if (creep.pos.roomName !== sourceConfig.roomName) {
-    creep.moveTo(containerPosition, {
-      range: 1,
-      reusePath: 20
-    });
+  // Block the container tile so haulers never path onto it.
+  // The miner must stand on the container to harvest — if a
+  // hauler occupies that tile even for one tick, it blocks
+  // the miner and stops energy flow.
+  var moveOpts = {
+    range: 1,
+    reusePath: 20,
+    costCallback: function (roomName, costMatrix) {
+      if (roomName === containerRoom) {
+        costMatrix.set(containerX, containerY, 255);
+      }
+      return costMatrix;
+    }
+  };
+
+  if (creep.pos.roomName !== containerRoom) {
+    creep.moveTo(containerPosition, moveOpts);
     return;
   }
 
   if (
-    creep.pos.x === sourceConfig.containerX &&
-    creep.pos.y === sourceConfig.containerY
+    creep.pos.x === containerX &&
+    creep.pos.y === containerY
   ) {
+    // Should never happen now (costCallback blocks it), but
+    // just in case — move off immediately.
     creep.moveTo(remote.getWaitPosition(sourceConfig), {
       reusePath: 5
     });
@@ -185,10 +202,7 @@ function collect(creep, sourceConfig) {
   }
 
   if (creep.pos.getRangeTo(containerPosition) > 1) {
-    creep.moveTo(containerPosition, {
-      range: 1,
-      reusePath: 20
-    });
+    creep.moveTo(containerPosition, moveOpts);
     return;
   }
 

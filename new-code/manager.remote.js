@@ -942,7 +942,7 @@ function getSpawnRequests(homeRoomName) {
       const healthyCount = assigned.filter(
         c => c.ticksToLive === undefined || c.ticksToLive > replacementLead
       ).length;
-      if (healthyCount < 2) {
+      if (healthyCount < 1) {
         requests.push(createSourceRequest(
           'remoteHauler',
           homeRoomName,
