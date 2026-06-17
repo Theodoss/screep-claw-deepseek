@@ -228,6 +228,12 @@ function update(room, context) {
   else if (storedEnergy > 10000) upgradeMultiplier = 0.95;
   else if (storedEnergy > 5000) upgradeMultiplier = 0.88;
 
+  // When energy reserves are declining, limit upgrade acceleration.
+  // Spending above break-even drains storedEnergy and deepens the deficit.
+  if (shortFlow.netRate < 0) {
+    upgradeMultiplier = Math.min(upgradeMultiplier, 1.0);
+  }
+
   let upgradeRate = Math.max(
     0,
     (
