@@ -1004,17 +1004,11 @@ function getSpawnRequests(homeRoomName) {
 
     const remoteRoom = Game.rooms[remoteRoomName];
     const controller = remoteRoom ? remoteRoom.controller : null;
-    const reserverLead = reserverBody
-      ? getReserverLeadTicks(homeRoomName, remoteRoomName, reserverBody)
-      : 0;
-    // Spawn when reservation would run out before a new reserver arrives.
-    // Guard: at least 500 tick threshold so we don't chase tiny margins.
-    const reserveThreshold = Math.max(500, reserverLead + 200);
     const reservationLow = !!(
       controller &&
       (
         !controller.reservation ||
-        controller.reservation.ticksToEnd < reserveThreshold
+        controller.reservation.ticksToEnd < 2000
       )
     );
     const reservers = getAssignedCreeps(
@@ -1022,8 +1016,12 @@ function getSpawnRequests(homeRoomName) {
       homeRoomName,
       remoteRoomName
     );
-    // Healthy if alive long enough to travel + stay a while
-    const reserverReplacementLead = reserverLead + 300;
+    const reserverReplacementLead = reserverBody
+      ? reserverBody.length * CREEP_SPAWN_TIME + 150
+      : 0;
+    // Spawn a reserver only when reservation is at risk AND there's no
+    // healthy one already heading there. Without the healthy check,
+    // reservationLow stays true for many ticks and spawns a flood.
     if (
       reserverBody &&
       stable &&
