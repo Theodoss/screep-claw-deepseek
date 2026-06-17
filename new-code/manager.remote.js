@@ -15,7 +15,7 @@ const REMOTE_ROOMS = {
     { id: null, x: 23, y: 25, roomName: 'W49N26', containerX: 23, containerY: 24, enabled: true }
   ],
   W48N25: [
-    { id: null, x: 28, y: 22, roomName: 'W48N25', containerX: 28, containerY: 22, enabled: true },
+    { id: null, x: 29, y: 23, roomName: 'W48N25', containerX: 28, containerY: 22, enabled: true },
     { id: null, x: 41, y: 3, roomName: 'W48N25', containerX: 42, containerY: 3, enabled: true }
   ],
   W48N26: [
@@ -428,12 +428,43 @@ function resolveSourceId(sourceConfig) {
   if (sourceConfig.id) return sourceConfig.id;
   if (!Game.rooms[sourceConfig.roomName]) return null;
 
-  const sources = getPositionLook(
+  let sources = getPositionLook(
     sourceConfig.roomName,
     sourceConfig.x,
     sourceConfig.y,
     LOOK_SOURCES
   );
+
+  // If source not found at exact coords, scan around the container position.
+  // Sources are always within range 1 of their container.
+  if (sources.length === 0) {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const searchX = sourceConfig.containerX + dx;
+        const searchY = sourceConfig.containerY + dy;
+        if (searchX <= 0 || searchX >= 49 || searchY <= 0 || searchY >= 49) continue;
+        sources = getPositionLook(
+          sourceConfig.roomName,
+          searchX,
+          searchY,
+          LOOK_SOURCES
+        );
+        if (sources.length > 0) {
+          // Found the real source — fix the coordinates
+          sourceConfig.x = searchX;
+          sourceConfig.y = searchY;
+          console.log(
+            `[remote] source coords corrected ${sourceConfig.roomName} ` +
+            `${searchX},${searchY}`
+          );
+          break;
+        }
+      }
+      if (sources.length > 0) break;
+    }
+  }
+
   if (sources.length === 0) return null;
 
   sourceConfig.id = sources[0].id;
