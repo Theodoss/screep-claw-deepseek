@@ -21,23 +21,7 @@ function getRemoteWork(creep, remoteConfig) {
     }
   }
 
-  // 2. Road construction sites
-  const roadSites = creep.room.find(FIND_CONSTRUCTION_SITES, {
-    filter: function (site) {
-      return site.structureType === STRUCTURE_ROAD;
-    }
-  });
-  if (roadSites.length > 0) {
-    const closest = creep.pos.findClosestByPath(roadSites) ||
-      creep.pos.findClosestByRange(roadSites) ||
-      roadSites[0];
-    return {
-      target: closest,
-      type: 'build'
-    };
-  }
-
-  // 3. Container repairs
+  // 2. Container repairs (before roads — prevent decay→destruction cycle)
   for (let index = 0; index < remoteConfig.sources.length; index++) {
     const sourceConfig = remoteConfig.sources[index];
     if (!sourceConfig || sourceConfig.enabled !== true) continue;
@@ -53,6 +37,22 @@ function getRemoteWork(creep, remoteConfig) {
         type: 'repair'
       };
     }
+  }
+
+  // 3. Road construction sites
+  const roadSites = creep.room.find(FIND_CONSTRUCTION_SITES, {
+    filter: function (site) {
+      return site.structureType === STRUCTURE_ROAD;
+    }
+  });
+  if (roadSites.length > 0) {
+    const closest = creep.pos.findClosestByPath(roadSites) ||
+      creep.pos.findClosestByRange(roadSites) ||
+      roadSites[0];
+    return {
+      target: closest,
+      type: 'build'
+    };
   }
 
   return null;
