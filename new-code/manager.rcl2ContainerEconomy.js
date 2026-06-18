@@ -763,17 +763,17 @@ function run(room, state) {
     return;
   }
 
-  // Upgrader body builder: use room capacity (energyCapacityAvailable)
-  // instead of transient energyAvailable. When extensions are partially
-  // depleted from hauler/miner spawns, energyAvailable-based bodies
-  // produce 3-4x fewer WORK parts than what the colony can sustain.
-  // This wrapper guarantees maximal upgrader bodies regardless of
-  // spawn-cycle energy dips (the 50% floor in bootstrap still gates
-  // overall spawn permission).
+  // Upgrader body builder: use room.energyAvailable so the spawn
+  // can always afford the body. The 50% floor check in bootstrap
+  // prevents spawning during deep dips; energyAvailable-based sizing
+  // ensures the body shrinks gracefully when energy is below capacity.
+  // Previous energyCapacityAvailable sizing produced bodies the spawn
+  // could not pay for (e.g. 1650-cost body with only 1150 available),
+  // causing silent spawn failures.
   const upgraderBodyBuilder = function (energyCap, role, desiredWork) {
     if (role === 'rcl1Upgrader') {
       return bodyPolicy.buildStaticUpgraderBody(
-        room.energyCapacityAvailable,
+        room.energyAvailable,
         desiredWork
       );
     }
