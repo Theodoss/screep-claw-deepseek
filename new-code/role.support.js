@@ -259,9 +259,14 @@ function runBudgetedUpgrade(creep) {
 
 function repairControllerContainer(creep) {
   const container = economy.getControllerContainer(creep.room);
+  // Only repair when the container is at genuine risk (<50% health).
+  // The old 80% threshold caused all upgraders to over-repair the
+  // same container every tick, wasting energy that should go to
+  // controller upgrades.  Container decay is slow enough that 50%
+  // still leaves plenty of buffer.
   if (
     !container ||
-    container.hits >= container.hitsMax * 0.8
+    container.hits >= container.hitsMax * 0.5
   ) {
     return false;
   }
