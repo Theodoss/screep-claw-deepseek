@@ -307,8 +307,15 @@ function run(room, options) {
   // Use (count - dyingCount) so we replace dying upgraders before
   // they expire, avoiding a work gap.  Raw count includes dying
   // creeps and would block replacement when count >= limit+1.
+  // Also allow spawning above the count limit when existing upgraders
+  // are severely underpowered (e.g. basic-body upgraders filling all
+  // slots but providing <25% of target work).  This recovers from
+  // energy-dip downgrades where tiny bodies block upgrades to large ones.
   if (
-    (upgraders.count - upgraders.dyingCount) < upgraderPolicy.limit &&
+    (
+      (upgraders.count - upgraders.dyingCount) < upgraderPolicy.limit ||
+      upgraders.healthyWork < upgraderWorkTarget * 0.25
+    ) &&
     upgraders.healthyWork < upgraderWorkTarget
   ) {
     trySpawn(
