@@ -10,7 +10,6 @@ const HAULER_BACKLOG_TICKS = 50;
 const HAULER_LOW_IDLE_TICKS = 100;
 const SOURCE_BACKLOG_ENERGY = 1000;
 const SOURCE_LOW_ENERGY = 100;
-const HAULER_TARGET_CAP = 2;
 
 function ensureRoomMemory(roomName) {
   if (!Memory.rooms) Memory.rooms = {};
@@ -550,10 +549,7 @@ function run(room, state) {
     requiredHaulers,
     backlogBonus
   );
-  const dynamicHaulerTarget = Math.min(
-    HAULER_TARGET_CAP,
-    capacityHaulerPlan.targetCount
-  );
+  const dynamicHaulerTarget = capacityHaulerPlan.targetCount;
   const haulerPlan = bodyPolicy.getHaulerPlan(
     room.energyCapacityAvailable,
     state.readySources,

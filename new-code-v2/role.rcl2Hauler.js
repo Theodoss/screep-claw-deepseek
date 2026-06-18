@@ -1,5 +1,4 @@
 const economy = require('manager.economy');
-const logistics = require('logistics.local');
 
 const TOWER_PEACE_RESERVE = 800;
 
@@ -99,32 +98,9 @@ function selectPickupContainer(creep) {
   return selected;
 }
 
-function findPickupStorage(creep) {
-  const storage = creep.room.storage;
-  if (
-    !storage ||
-    storage.store.getUsedCapacity(RESOURCE_ENERGY) <= 0
-  ) {
-    return null;
-  }
-
-  return storage;
-}
-
 function selectPickup(creep) {
-  const salvage = selectSalvage(creep);
-  if (salvage) return salvage;
-
-  const container = selectPickupContainer(creep);
-  if (container) {
-    return {
-      target: container,
-      type: 'withdraw'
-    };
-  }
-
-  return {
-    target: findPickupStorage(creep),
+  return selectSalvage(creep) || {
+    target: selectPickupContainer(creep),
     type: 'withdraw'
   };
 }
@@ -160,74 +136,47 @@ function findTower(creep) {
   return creep.pos.findClosestByPath(targets);
 }
 
-function findStorage(creep) {
-  const storage = creep.room.storage;
+function findControllerContainer(creep) {
+  const state = economy.getState(creep.room);
   if (
-    !storage ||
-    storage.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
+    state.recovery ||
+    (state.upgraderWorkTarget || 0) <= 0
   ) {
     return null;
   }
 
-  return storage;
+  const container = economy.getControllerContainer(creep.room);
+  if (
+    !container ||
+    container.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
+  ) {
+    return null;
+  }
+
+  return container;
 }
 
 function findEnergyTarget(creep) {
-  const state = economy.getState(creep.room);
-  const controllerEmergency = economy.controllerEmergency(creep.room);
-  if (controllerEmergency) {
+  if (economy.controllerEmergency(creep.room)) {
     const controllerContainer = economy.getControllerContainer(creep.room);
-    const emergencyRequest = logistics.getControllerDeliveryRequest(
-      creep,
-      controllerContainer,
-      state,
-      true
-    );
-    if (emergencyRequest) return emergencyRequest;
+    if (
+      controllerContainer &&
+      controllerContainer.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      return controllerContainer;
+    }
   }
 
-  const spawnTarget = findSpawnOrExtension(creep);
-  if (spawnTarget) {
-    logistics.clearDeliveryAssignment(creep);
-    return {
-      target: spawnTarget,
-      reason: spawnTarget.structureType
-    };
-  }
-
-  const towerTarget = findTower(creep);
-  if (towerTarget) {
-    logistics.clearDeliveryAssignment(creep);
-    return {
-      target: towerTarget,
-      reason: towerTarget.structureType
-    };
-  }
-
-  if (!state.recovery && (state.upgraderWorkTarget || 0) > 0) {
-    const controllerContainer = economy.getControllerContainer(creep.room);
-    const controllerRequest = logistics.getControllerDeliveryRequest(
-      creep,
-      controllerContainer,
-      state,
-      false
-    );
-    if (controllerRequest) return controllerRequest;
-  }
-
-  logistics.clearDeliveryAssignment(creep);
-  const storage = findStorage(creep);
-  return storage
-    ? {
-        target: storage,
-        reason: storage.structureType
-      }
-    : null;
+  return (
+    findSpawnOrExtension(creep) ||
+    findTower(creep) ||
+    findControllerContainer(creep)
+  );
 }
 
 function deliver(creep) {
-  const request = findEnergyTarget(creep);
-  if (!request) {
+  const target = findEnergyTarget(creep);
+  if (!target) {
     const canBufferMore =
       creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
       getSourceContainers(creep).some(
@@ -245,23 +194,10 @@ function deliver(creep) {
     return false;
   }
 
-  creep.memory.task = `transfer:${request.reason}`;
-  const result = request.amount === undefined
-    ? creep.transfer(request.target, RESOURCE_ENERGY)
-    : creep.transfer(
-      request.target,
-      RESOURCE_ENERGY,
-      request.amount
-    );
+  creep.memory.task = `transfer:${target.structureType}`;
+  const result = creep.transfer(target, RESOURCE_ENERGY);
   if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(request.target, {
-      visualizePathStyle: { stroke: '#ffffff' }
-    });
-  } else if (
-    result === OK &&
-    creep.memory.deliveryTargetId === request.target.id
-  ) {
-    creep.memory.deliveryIntentTick = Game.time;
+    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
   }
   return true;
 }
