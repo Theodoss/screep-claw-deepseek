@@ -105,7 +105,37 @@ module.exports.loop = function () {
     }
   }
 
-  // 2. 每個 room 先更新 container economy，再選 RCL1/RCL2 manager。
+  // 2. Remote spawning: run FIRST so remote creeps get spawn priority.
+  // isHomeEconomyStable ensures home economy is healthy before we steal the spawn.
+  try {
+    remoteDefense.run();
+    remote.run();
+
+    const defenseRequests = remoteDefense.getAllSpawnRequests('W49N25');
+    if (defenseRequests.length > 0) {
+      const homeRoom = Game.rooms['W49N25'];
+      if (homeRoom) {
+        const spawn = homeRoom.find(FIND_MY_SPAWNS)[0];
+        if (spawn && !spawn.spawning) {
+          const req = defenseRequests[0];
+          if (homeRoom.energyAvailable >= req.bodyCost) {
+            const result = spawn.spawnCreep(req.body, req.name, {
+              memory: req.memory
+            });
+            if (result === OK) {
+              console.log('[defense] spawned ' + req.name);
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    errorReporter.capture(err, {
+      module: 'manager.remote'
+    });
+  }
+
+  // 3. 每個 room 先更新 container economy，再選 RCL1/RCL2 manager。
   for (const roomName in Game.rooms) {
     const room = Game.rooms[roomName];
     let economyState;
@@ -171,39 +201,7 @@ module.exports.loop = function () {
     }
   }
 
-  // Remote spawning runs after every home manager has had first use of spawn.
-  try {
-    remoteDefense.run();
-    remote.run();
-
-    // Defense spawn requests: try after remote spawns
-    const defenseRequests = remoteDefense.getAllSpawnRequests('W49N25');
-    if (defenseRequests.length > 0) {
-      const homeRoom = Game.rooms['W49N25'];
-      if (!homeRoom) {
-        // skip
-      } else {
-        const spawn = homeRoom.find(FIND_MY_SPAWNS)[0];
-        if (spawn && !spawn.spawning) {
-          const req = defenseRequests[0];
-          if (homeRoom.energyAvailable >= req.bodyCost) {
-            const result = spawn.spawnCreep(req.body, req.name, {
-              memory: req.memory
-            });
-            if (result === OK) {
-              console.log('[defense] spawned ' + req.name);
-            }
-          }
-        }
-      }
-    }
-  } catch (err) {
-    errorReporter.capture(err, {
-      module: 'manager.remote'
-    });
-  }
-
-  // 3. 執行每隻 creep 的 role
+  // 4. 執行每隻 creep 的 role
   for (const name in Game.creeps) {
     const creep = Game.creeps[name];
 
@@ -227,12 +225,12 @@ module.exports.loop = function () {
     }
   }
 
-  // 4. 每 20 tick 輸出給 Codex / 外部 agent 看的狀態
+  // 5. 每 20 tick 輸出給 Codex / 外部 agent 看的狀態
   if (Game.time % 20 === 0) {
     stats.collect();
   }
 
-  // 5. 每 100 tick 記錄目前有視野的房間態勢
+  // 6. 每 100 tick 記錄目前有視野的房間態勢
   if (Game.time % 100 === 0) {
     try {
       intel.collectVisibleRooms();
