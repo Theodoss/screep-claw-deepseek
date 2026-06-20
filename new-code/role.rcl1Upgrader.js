@@ -110,8 +110,12 @@ module.exports = {
         creep.moveTo(spawnExt, {
           visualizePathStyle: { stroke: '#ffaa00' }
         });
+        return;
       }
-      return;
+      if (result === OK || result === ERR_FULL) {
+        return;
+      }
+      // withdraw failed (ERR_NOT_ENOUGH_ENERGY etc): fall through to storage
     }
 
     // Storage fallback (usually farther, deeper energy reserve)
