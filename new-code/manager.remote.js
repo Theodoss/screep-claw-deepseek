@@ -670,6 +670,35 @@ function buildRemoteMinerBody(energyCapacity) {
 }
 
 function buildRemoteHaulerBody(energyCapacity) {
+  // RCL6 (~2300): 21 CARRY / 22 MOVE = 1050 carry, clears ~10 e/t at D=50
+  if (energyCapacity >= 2200) {
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 1800) {
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 1500) {
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+    ];
+  }
   if (energyCapacity >= 1300) {
     return [
       CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
