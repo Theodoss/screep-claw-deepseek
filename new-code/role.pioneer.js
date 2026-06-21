@@ -1,7 +1,7 @@
-const nav = require('nav.flag');
+const travel = require('travel');
 
 // Pioneer: travels to expansion room and builds construction sites.
-// Uses nav-0, nav-1, ... nav-N flag chain for navigation.
+// Travel is handled by travel.js (flag-assisted, exit-locked).
 module.exports = {
   run: function (creep) {
     const targetRoom = creep.memory.targetRoom || creep.memory.remoteRoom;
@@ -11,20 +11,10 @@ module.exports = {
       return;
     }
 
-    // Navigate to target room
-    if (creep.pos.roomName !== targetRoom) {
-      // 1. Flag-based navigation (if flags exist)
-      if (nav.moveToTarget(creep, targetRoom)) return;
+    // ── Travel: cross-room navigation ──
+    if (travel.run(creep, targetRoom)) return;
 
-      // 2. Fallback: direct multi-room moveTo to target room center
-      creep.moveTo(
-        new RoomPosition(25, 25, targetRoom),
-        { reusePath: 50, visualizePathStyle: { stroke: '#44cc44' } }
-      );
-      return;
-    }
-
-    // In target room — find and build construction sites
+    // ── Action: in target room ──
     const sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
     if (sites.length > 0) {
       const spawnSite = sites.find(function (s) { return s.structureType === STRUCTURE_SPAWN; });
@@ -36,7 +26,7 @@ module.exports = {
       return;
     }
 
-    // No construction sites — harvest energy and upgrade controller
+    // No sites — harvest and upgrade
     if (creep.store.getFreeCapacity() > 0) {
       const source = creep.pos.findClosestByPath(FIND_SOURCES);
       if (source) {
@@ -47,7 +37,6 @@ module.exports = {
       return;
     }
 
-    // Full energy, no sites — upgrade controller to push RCL
     const controller = creep.room.controller;
     if (controller) {
       if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {

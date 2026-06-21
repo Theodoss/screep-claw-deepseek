@@ -1,7 +1,7 @@
-const nav = require('nav.flag');
+const travel = require('travel');
 
 // Moves to target expansion room and claims the controller.
-// Uses nav-0, nav-1, ... nav-N flag chain for navigation.
+// Travel is handled by travel.js (flag-assisted, exit-locked).
 module.exports = {
   run: function (creep) {
     const targetRoom = creep.memory.targetRoom || creep.memory.remoteRoom;
@@ -12,20 +12,10 @@ module.exports = {
       return;
     }
 
-    // Navigate to target room
-    if (creep.pos.roomName !== targetRoom) {
-      // 1. Flag-based navigation (if flags exist)
-      if (nav.moveToTarget(creep, targetRoom)) return;
+    // ── Travel: cross-room navigation ──
+    if (travel.run(creep, targetRoom)) return;
 
-      // 2. Fallback: direct multi-room moveTo to target room center
-      creep.moveTo(
-        new RoomPosition(25, 25, targetRoom),
-        { reusePath: 50, visualizePathStyle: { stroke: '#ffaa00' } }
-      );
-      return;
-    }
-
-    // In target room — find and claim controller
+    // ── Action: in target room ──
     const controller = Game.rooms[targetRoom]
       ? Game.rooms[targetRoom].controller
       : null;
