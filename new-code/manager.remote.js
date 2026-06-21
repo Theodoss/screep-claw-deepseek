@@ -9,12 +9,14 @@ const REMOTE_ROAD_MAX_ACTIVE_SITES = 3;
 // Each remote room has its own source list.  x/y = source position,
 // containerX/Y = where the container should go (adjacent non-wall tile).
 // Sources and containers are discovered on first creep entry.
-// Expansion rooms: new colonies to claim (controller position).
+// Expansion rooms: new colonies to claim.
 // Once claimed the rcl1Bootstrap manager takes over from the home spawn.
 const EXPANSION_TARGETS = {
   W47N22: {
-    controllerX: 23,
-    controllerY: 9,
+    spawnX: 23,
+    spawnY: 9,
+    controllerX: 15,
+    controllerY: 39,
     enabled: true
   }
 };
