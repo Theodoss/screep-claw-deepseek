@@ -217,7 +217,7 @@ function update(room, context) {
   const emergency = controllerEmergency(room);
   const recovery = !!(
     input.energyStarved ||
-    input.minersHealthy === false ||
+    (input.minersHealthy === false && storedEnergy < 5000) ||
     (input.haulersHealthy === false && storedEnergy < 5000)
   );
   let upgradeMultiplier = 0.80;
