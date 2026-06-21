@@ -156,15 +156,25 @@ function run(creep) {
     }
   }
 
-  // Threat cleared or no threat — return home and standby
-  if (moveToRoom(creep, homeRoom)) {
-    creep.memory.task = 'returning:home';
-    return;
+  // Threat cleared — garrison the remote room to block the next invasion.
+  // Only return home when near death (TTL < 300) so the spawn can replace.
+  if (creep.ticksToLive < 300) {
+    if (moveToRoom(creep, homeRoom)) {
+      creep.memory.task = 'returning:home';
+      return;
+    }
   }
 
-  creep.memory.task = 'standby:home';
+  if (targetRoom && creep.pos.roomName !== targetRoom) {
+    if (moveToRoom(creep, targetRoom)) {
+      creep.memory.task = 'garrison:' + targetRoom;
+      return;
+    }
+  }
 
-  // Self-heal if damaged (regenerate before standing by)
+  creep.memory.task = 'garrison:' + (targetRoom || homeRoom);
+
+  // Self-heal if damaged (regenerate while garrisoned)
   if (creep.hits < creep.hitsMax) {
     creep.heal(creep);
   }
