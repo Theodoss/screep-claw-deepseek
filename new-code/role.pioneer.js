@@ -1,7 +1,7 @@
 const nav = require('nav.flag');
 
 // Pioneer: travels to expansion room and builds construction sites.
-// Uses nav-0, nav-1, ... nav-N flag chain for pathfinding.
+// Uses nav-0, nav-1, ... nav-N flag chain for navigation.
 module.exports = {
   run: function (creep) {
     const targetRoom = creep.memory.targetRoom || creep.memory.remoteRoom;
@@ -13,21 +13,13 @@ module.exports = {
 
     // Navigate to target room
     if (creep.pos.roomName !== targetRoom) {
-      // 1. Try flag-based navigation first
+      // 1. Flag-based navigation (if flags exist)
       if (nav.moveToTarget(creep, targetRoom)) return;
 
-      // 2. Fallback: room-exit pathfinding
-      const exitDir = Game.map.findExit(creep.pos.roomName, targetRoom);
-      if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
-        const exit = creep.pos.findClosestByPath(exitDir);
-        if (exit) {
-          creep.moveTo(exit, { reusePath: 20, visualizePathStyle: { stroke: '#44cc44' } });
-          return;
-        }
-      }
+      // 2. Fallback: direct multi-room moveTo to target room center
       creep.moveTo(
         new RoomPosition(25, 25, targetRoom),
-        { reusePath: 20, visualizePathStyle: { stroke: '#44cc44' } }
+        { reusePath: 50, visualizePathStyle: { stroke: '#44cc44' } }
       );
       return;
     }
