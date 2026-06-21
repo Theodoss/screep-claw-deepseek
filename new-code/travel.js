@@ -1,6 +1,8 @@
 // Unified cross-room travel layer.
 // State-locked, exit-locked, flag-assisted navigation.
-// Stores travel state in creep.memory._t.
+// Stores travel state in creep.memory._t:
+//   _t.flagIdx — which nav-N flag we're heading to
+//   _t.lockedUntil — exit lock expiry game tick
 //
 // Usage:
 //   const travel = require('travel');
@@ -32,27 +34,44 @@ function nearExit(pos) {
   return pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47;
 }
 
-// Choose next waypoint: flag or room center
+// Pick the next waypoint.  State is persisted in travel memory so we don't
+// bounce back to earlier flags once we've passed them.
 function selectWaypoint(creep, targetRoom) {
   var flags = getFlagPath();
+  var t = creep.memory._t;
 
-  for (var i = 0; i < flags.length; i++) {
-    var f = flags[i];
-
-    // Arrived at this flag? (same room + range ≤1)
-    if (creep.pos.roomName === f.pos.roomName && creep.pos.inRangeTo(f.pos, 1)) {
-      continue;
-    }
-
-    // This flag is next — if different room, target room center first
-    if (creep.pos.roomName !== f.pos.roomName) {
-      return new RoomPosition(25, 25, f.pos.roomName);
-    }
-    return f.pos;
+  // No flags at all — go straight to destination
+  if (flags.length === 0) {
+    return new RoomPosition(25, 25, targetRoom);
   }
 
-  // No unvisited flags — target the destination room center
-  return new RoomPosition(25, 25, targetRoom);
+  // Initialize or advance flag index
+  if (t.flagIdx === undefined) {
+    t.flagIdx = 0;
+  }
+
+  // Check if we've reached the current flag while staying within bounds
+  while (t.flagIdx < flags.length) {
+    var f = flags[t.flagIdx];
+    if (creep.pos.roomName === f.pos.roomName && creep.pos.inRangeTo(f.pos, 1)) {
+      t.flagIdx++; // reached — advance to next flag
+    } else {
+      break; // this flag is not yet reached
+    }
+  }
+
+  // Past all flags — head to destination room center
+  if (t.flagIdx >= flags.length) {
+    return new RoomPosition(25, 25, targetRoom);
+  }
+
+  // Navigate toward the current unvisited flag
+  var next = flags[t.flagIdx];
+  // If flag is in a different room, navigate to that room's center first
+  if (creep.pos.roomName !== next.pos.roomName) {
+    return new RoomPosition(25, 25, next.pos.roomName);
+  }
+  return next.pos;
 }
 
 module.exports = {
