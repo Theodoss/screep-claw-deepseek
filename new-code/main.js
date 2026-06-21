@@ -10,6 +10,7 @@ const roleRemoteHauler = require('role.remoteHauler');
 const roleRemoteBuilder = require('role.remoteBuilder');
 const roleReserver = require('role.reserver');
 const roleRcl1Claimer = require('role.claimer');
+const rolePioneer = require('role.pioneer');
 const roleGuard = require('role.guard');
 const roleRemoteGuard = require('role.remoteGuard');
 const roleSquadMelee = require('role.squadMelee');
@@ -44,6 +45,7 @@ const ROLE_MODULES = {
   remoteBuilder: roleRemoteBuilder,
   reserver: roleReserver,
   claimer: roleRcl1Claimer,
+  pioneer: rolePioneer,
   guard: roleGuard,
   remoteGuard: roleRemoteGuard,
   squadMelee: roleSquadMelee,

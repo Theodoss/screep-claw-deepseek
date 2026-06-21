@@ -899,6 +899,20 @@ function remoteHasContainer(remoteRoomName, remoteConfig) {
   return false;
 }
 
+function countCreepsInRole(role, targetRoomName) {
+  let count = 0;
+  for (const name in Game.creeps) {
+    const c = Game.creeps[name];
+    if (
+      c.memory.role === role &&
+      (c.memory.targetRoom === targetRoomName || c.memory.remoteRoom === targetRoomName)
+    ) {
+      count++;
+    }
+  }
+  return count;
+}
+
 function countClaimers(targetRoomName) {
   let count = 0;
   for (const name in Game.creeps) {
@@ -938,25 +952,55 @@ function getSpawnRequests(homeRoomName) {
       continue;
     }
 
-    if (countClaimers(expRoomName) > 0) continue;
+    // Claimer: only if room not yet ours
+    if (!expRoom || !expRoom.controller || !expRoom.controller.my) {
+      if (countClaimers(expRoomName) > 0) continue;
 
-    // 3×CLAIM + 3×MOVE — 1950 energy.  Claims 3× faster (600 ticks instead of 1800).
-    const claimerBody = [CLAIM, CLAIM, CLAIM, MOVE, MOVE, MOVE];
-    const bodyCost = getBodyCost(claimerBody);
-    if (homeRoom.energyAvailable >= bodyCost) {
-      requests.push({
-        role: 'claimer',
-        name: `claimer_${expRoomName}_${Game.time}`,
-        body: claimerBody,
-        memory: {
+      // 3×CLAIM + 3×MOVE — 1950 energy.  Claims 3× faster (600 ticks instead of 1800).
+      const claimerBody = [CLAIM, CLAIM, CLAIM, MOVE, MOVE, MOVE];
+      const bodyCost = getBodyCost(claimerBody);
+      if (homeRoom.energyAvailable >= bodyCost) {
+        requests.push({
           role: 'claimer',
-          home: homeRoomName,
-          targetRoom: expRoomName,
-          remoteRoom: expRoomName,
-          signText: 'Theodos colony'
-        }
-      });
-      console.log(`[expansion] claimer queued for ${expRoomName}`);
+          name: `claimer_${expRoomName}_${Game.time}`,
+          body: claimerBody,
+          memory: {
+            role: 'claimer',
+            home: homeRoomName,
+            targetRoom: expRoomName,
+            remoteRoom: expRoomName,
+            signText: 'Theodos colony'
+          }
+        });
+        console.log(`[expansion] claimer queued for ${expRoomName}`);
+      }
+      continue;
+    }
+
+    // Pioneer: room is claimed — send builder if construction sites exist
+    const sites = expRoom.find(FIND_MY_CONSTRUCTION_SITES);
+    if (sites.length > 0 && countCreepsInRole('pioneer', expRoomName) === 0) {
+      // Large builder: 6 WORK + 6 CARRY + 12 MOVE = 1500 energy
+      const pioneerBody = [
+        WORK, WORK, WORK, WORK, WORK, WORK,
+        CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+      ];
+      if (homeRoom.energyAvailable >= getBodyCost(pioneerBody)) {
+        requests.push({
+          role: 'pioneer',
+          name: `pioneer_${expRoomName}_${Game.time}`,
+          body: pioneerBody,
+          memory: {
+            role: 'pioneer',
+            home: homeRoomName,
+            targetRoom: expRoomName,
+            remoteRoom: expRoomName
+          }
+        });
+        console.log(`[expansion] pioneer queued for ${expRoomName}`);
+      }
     }
   }
 
