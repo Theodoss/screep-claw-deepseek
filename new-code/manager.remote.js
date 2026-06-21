@@ -956,8 +956,8 @@ function getSpawnRequests(homeRoomName) {
     if (!expRoom || !expRoom.controller || !expRoom.controller.my) {
       if (countClaimers(expRoomName) > 0) continue;
 
-      // 3×CLAIM + 6×MOVE — 2100 energy.  6 MOVE → zero fatigue, moves every tick.
-      const claimerBody = [CLAIM, CLAIM, CLAIM, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+      // 3×CLAIM + 3×MOVE — 1950 energy.  Full speed on plains/road.
+      const claimerBody = [CLAIM, CLAIM, CLAIM, MOVE, MOVE, MOVE];
       const bodyCost = getBodyCost(claimerBody);
       if (homeRoom.energyAvailable >= bodyCost) {
         requests.push({
