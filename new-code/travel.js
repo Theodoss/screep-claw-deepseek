@@ -1,115 +1,141 @@
-// Unified cross-room travel layer.
-// State-locked, exit-locked, flag-assisted navigation.
-// Stores travel state in creep.memory._t:
-//   _t.flagIdx — which nav-N flag we're heading to
-//   _t.lockedUntil — exit lock expiry game tick
+// Room-level cross-room travel using Game.map.findRoute.
+// Each tick only pathfinds to the current room's exit — never
+// does cross-room pathfinding, eliminating border oscillation.
+//
+// Optional: nav-0, nav-1, ... nav-N flags are interpolated into
+// the route as waypoint rooms.
+//
+// State stored in creep.memory._t:
+//   _t.route      — cached room array from findRoute
+//   _t.routeIdx   — current index in route
 //
 // Usage:
 //   const travel = require('travel');
 //   if (!travel.run(creep, 'W47N22')) {
-//     // Arrived — do your room-level action
+//     // Arrived
 //   }
-//   // Still traveling — return (travel took control)
 
-var EXIT_LOCK_TICKS = 5;
-var ARRIVE_RANGE = 3;
-
-function getFlagPath() {
-  var flags = [];
+function getFlagRooms() {
+  var rooms = [];
   for (var flagName in Game.flags) {
     var match = flagName.match(/^nav-(\d+)$/);
     if (match) {
-      flags.push({
+      rooms.push({
         index: parseInt(match[1], 10),
-        pos: Game.flags[flagName].pos,
-        name: flagName
+        roomName: Game.flags[flagName].pos.roomName
       });
     }
   }
-  flags.sort(function (a, b) { return a.index - b.index; });
-  return flags;
+  rooms.sort(function (a, b) { return a.index - b.index; });
+  return rooms.map(function (r) { return r.roomName; });
 }
 
-function nearExit(pos) {
-  return pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47;
-}
+function buildRoute(fromRoom, toRoom) {
+  var flagRooms = getFlagRooms();
 
-// Pick the next waypoint.  State is persisted in travel memory.
-function selectWaypoint(creep, targetRoom) {
-  var flags = getFlagPath();
-  var t = creep.memory._t;
-
-  if (flags.length === 0) {
-    return new RoomPosition(25, 25, targetRoom);
+  if (flagRooms.length === 0) {
+    // No flags — direct route
+    var r = Game.map.findRoute(fromRoom, toRoom);
+    if (r === ERR_NO_PATH) return null;
+    return r.map(function (step) { return step.room; });
   }
 
-  if (t.flagIdx === undefined) {
-    t.flagIdx = 0;
-  }
+  // Build multi-segment route through flag waypoints
+  var fullRoute = [];
+  var prevRoom = fromRoom;
+  var allRooms = [].concat(flagRooms, [toRoom]);
 
-  while (t.flagIdx < flags.length) {
-    var f = flags[t.flagIdx];
-    if (creep.pos.roomName === f.pos.roomName && creep.pos.inRangeTo(f.pos, 1)) {
-      t.flagIdx++;
-    } else {
-      break;
+  for (var i = 0; i < allRooms.length; i++) {
+    var seg = Game.map.findRoute(prevRoom, allRooms[i]);
+    if (seg === ERR_NO_PATH) return null;
+    var segRooms = seg.map(function (step) { return step.room; });
+    // Don't duplicate last room of previous segment
+    if (fullRoute.length > 0 && fullRoute[fullRoute.length - 1] === segRooms[0]) {
+      segRooms.shift();
     }
+    fullRoute = fullRoute.concat(segRooms);
+    prevRoom = allRooms[i];
   }
 
-  if (t.flagIdx >= flags.length) {
-    return new RoomPosition(25, 25, targetRoom);
-  }
-
-  var next = flags[t.flagIdx];
-  if (creep.pos.roomName !== next.pos.roomName) {
-    return new RoomPosition(25, 25, next.pos.roomName);
-  }
-  return next.pos;
+  return fullRoute;
 }
 
 module.exports = {
+  // Returns true = still traveling.
+  // Returns false = arrived.
   run: function (creep, targetRoom) {
     var mem = creep.memory;
     if (!mem._t) mem._t = {};
     var t = mem._t;
 
-    // ── Arrival check ──
+    // ── Already there? ──
     if (creep.pos.roomName === targetRoom) {
       var exitDist = Math.min(
-        creep.pos.x,
-        49 - creep.pos.x,
-        creep.pos.y,
-        49 - creep.pos.y
+        creep.pos.x, 49 - creep.pos.x,
+        creep.pos.y, 49 - creep.pos.y
       );
-      if (exitDist >= ARRIVE_RANGE) {
+      if (exitDist >= 3) {
         delete mem._t;
         return false;
       }
     }
 
-    // ── Exit lock: skip waypoint recalculation, but keep moving ──
-    var locked = t.lockedUntil && Game.time < t.lockedUntil;
-
-    // ── Move toward waypoint ──
-    var dest;
-    if (!locked) {
-      dest = selectWaypoint(creep, targetRoom);
-      t.lastDest = { x: dest.x, y: dest.y, roomName: dest.roomName };
-    } else {
-      // Locked: reuse last destination without recalculating waypoint
-      var ld = t.lastDest;
-      dest = ld
-        ? new RoomPosition(ld.x, ld.y, ld.roomName)
-        : new RoomPosition(25, 25, targetRoom);
+    // ── Build or refresh route ──
+    if (!t.route || t.routeIdx === undefined) {
+      t.route = buildRoute(creep.pos.roomName, targetRoom);
+      t.routeIdx = 0;
+      if (!t.route || t.route.length === 0) {
+        // No route found — fall back to room-center moveTo
+        creep.moveTo(new RoomPosition(25, 25, targetRoom), {
+          reusePath: 20,
+          visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
+        });
+        return true;
+      }
     }
 
-    creep.moveTo(dest, {
-      reusePath: locked ? 50 : 20,
-      visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
-    });
+    // ── Advance route index when we enter the next room ──
+    while (
+      t.routeIdx < t.route.length &&
+      creep.pos.roomName === t.route[t.routeIdx]
+    ) {
+      t.routeIdx++;
+    }
 
-    if (!locked && nearExit(creep.pos)) {
-      t.lockedUntil = Game.time + EXIT_LOCK_TICKS;
+    // ── Past all rooms? Head directly to target ──
+    if (t.routeIdx >= t.route.length) {
+      creep.moveTo(new RoomPosition(25, 25, targetRoom), {
+        reusePath: 20,
+        visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
+      });
+      return true;
+    }
+
+    // ── Pathfind to exit of current room toward next room in route ──
+    var nextRoom = t.route[t.routeIdx];
+    var exitDir = Game.map.findExit(creep.pos.roomName, nextRoom);
+
+    if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) {
+      // Can't find exit — recalculate route
+      delete t.route;
+      delete t.routeIdx;
+      creep.moveTo(new RoomPosition(25, 25, targetRoom), {
+        reusePath: 50
+      });
+      return true;
+    }
+
+    var exit = creep.pos.findClosestByPath(exitDir);
+    if (exit) {
+      creep.moveTo(exit, {
+        reusePath: 10,
+        visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
+      });
+    } else {
+      // Exit blocked or not reachable — head to room center
+      creep.moveTo(new RoomPosition(25, 25, creep.pos.roomName), {
+        reusePath: 10
+      });
     }
 
     return true;
