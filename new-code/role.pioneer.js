@@ -1,9 +1,10 @@
+const nav = require('nav.flag');
+
 // Pioneer: travels to expansion room and builds construction sites.
-// Used after claiming a new room to build the first spawn.
+// Uses nav-0, nav-1, ... nav-N flag chain for pathfinding.
 module.exports = {
   run: function (creep) {
     const targetRoom = creep.memory.targetRoom || creep.memory.remoteRoom;
-    const homeRoom = creep.memory.homeRoom || creep.memory.home;
 
     if (!targetRoom) {
       console.log(`[pioneer] ${creep.name} no target room`);
@@ -12,6 +13,10 @@ module.exports = {
 
     // Navigate to target room
     if (creep.pos.roomName !== targetRoom) {
+      // 1. Try flag-based navigation first
+      if (nav.moveToTarget(creep, targetRoom)) return;
+
+      // 2. Fallback: room-exit pathfinding
       const exitDir = Game.map.findExit(creep.pos.roomName, targetRoom);
       if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
         const exit = creep.pos.findClosestByPath(exitDir);
@@ -30,8 +35,7 @@ module.exports = {
     // In target room — find and build construction sites
     const sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
     if (sites.length > 0) {
-      // Prioritize spawn
-      const spawnSite = sites.find(s => s.structureType === STRUCTURE_SPAWN);
+      const spawnSite = sites.find(function (s) { return s.structureType === STRUCTURE_SPAWN; });
       const target = spawnSite || sites[0];
 
       if (creep.build(target) === ERR_NOT_IN_RANGE) {

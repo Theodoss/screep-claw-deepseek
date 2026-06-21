@@ -1,4 +1,7 @@
+const nav = require('nav.flag');
+
 // Moves to target expansion room and claims the controller.
+// Uses nav-0, nav-1, ... nav-N flag chain for pathfinding.
 module.exports = {
   run: function (creep) {
     const targetRoom = creep.memory.targetRoom || creep.memory.remoteRoom;
@@ -11,6 +14,10 @@ module.exports = {
 
     // Navigate to target room
     if (creep.pos.roomName !== targetRoom) {
+      // 1. Try flag-based navigation first
+      if (nav.moveToTarget(creep, targetRoom)) return;
+
+      // 2. Fallback: room-exit pathfinding
       const exitDir = Game.map.findExit(creep.pos.roomName, targetRoom);
       if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
         const exit = creep.pos.findClosestByPath(exitDir);
@@ -37,7 +44,6 @@ module.exports = {
     }
 
     if (controller.my) {
-      // Already ours — just sign
       if (creep.signController(controller, signText) === ERR_NOT_IN_RANGE) {
         creep.moveTo(controller, { reusePath: 20 });
       }
@@ -50,7 +56,6 @@ module.exports = {
     } else if (result === OK) {
       console.log(`[claimer] ${creep.name} claimed ${targetRoom}!`);
     } else if (result === ERR_GCL_NOT_ENOUGH) {
-      // GCL too low to claim — reserve instead
       const reserveResult = creep.reserveController(controller);
       if (reserveResult === ERR_NOT_IN_RANGE) {
         creep.moveTo(controller, { reusePath: 20 });
