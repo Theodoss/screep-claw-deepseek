@@ -9,6 +9,16 @@ const REMOTE_ROAD_MAX_ACTIVE_SITES = 3;
 // Each remote room has its own source list.  x/y = source position,
 // containerX/Y = where the container should go (adjacent non-wall tile).
 // Sources and containers are discovered on first creep entry.
+// Expansion rooms: new colonies to claim (controller position).
+// Once claimed the rcl1Bootstrap manager takes over from the home spawn.
+const EXPANSION_TARGETS = {
+  W47N22: {
+    controllerX: 23,
+    controllerY: 9,
+    enabled: true
+  }
+};
+
 const REMOTE_ROOMS = {
   W49N26: [
     { id: null, x: 16, y: 26, roomName: 'W49N26', containerX: 16, containerY: 25, enabled: true },
@@ -887,6 +897,20 @@ function remoteHasContainer(remoteRoomName, remoteConfig) {
   return false;
 }
 
+function countClaimers(targetRoomName) {
+  let count = 0;
+  for (const name in Game.creeps) {
+    const c = Game.creeps[name];
+    if (
+      c.memory.role === 'claimer' &&
+      (c.memory.targetRoom === targetRoomName || c.memory.remoteRoom === targetRoomName)
+    ) {
+      count++;
+    }
+  }
+  return count;
+}
+
 function getSpawnRequests(homeRoomName) {
   const requests = [];
   const homeConfig = getHomeConfig(homeRoomName);
@@ -900,6 +924,39 @@ function getSpawnRequests(homeRoomName) {
   const haulerBody = buildRemoteHaulerBody(energyCapacity);
   const builderBody = buildRemoteBuilderBody(energyCapacity);
   const reserverBody = buildReserverBody(energyCapacity);
+
+  // ── Expansion claimers ──
+  for (const expRoomName in EXPANSION_TARGETS) {
+    const expConfig = EXPANSION_TARGETS[expRoomName];
+    if (!expConfig || !expConfig.enabled) continue;
+
+    // Already claimed? Skip.
+    const expRoom = Game.rooms[expRoomName];
+    if (expRoom && expRoom.controller && expRoom.controller.my) {
+      continue;
+    }
+
+    if (countClaimers(expRoomName) > 0) continue;
+
+    // CLAIM+MOVE+MOVE — 700 energy.  Extra MOVE speeds travel 4 rooms.
+    const claimerBody = [CLAIM, MOVE, MOVE];
+    const bodyCost = getBodyCost(claimerBody);
+    if (homeRoom.energyAvailable >= bodyCost) {
+      requests.push({
+        role: 'claimer',
+        name: `claimer_${expRoomName}_${Game.time}`,
+        body: claimerBody,
+        memory: {
+          role: 'claimer',
+          home: homeRoomName,
+          targetRoom: expRoomName,
+          remoteRoom: expRoomName,
+          signText: 'Theodos colony'
+        }
+      });
+      console.log(`[expansion] claimer queued for ${expRoomName}`);
+    }
+  }
 
   for (const remoteRoomName in homeConfig.rooms) {
     const remoteConfig = homeConfig.rooms[remoteRoomName];
