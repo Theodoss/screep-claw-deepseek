@@ -940,8 +940,8 @@ function getSpawnRequests(homeRoomName) {
 
     if (countClaimers(expRoomName) > 0) continue;
 
-    // CLAIM+MOVE+MOVE — 700 energy.  Extra MOVE speeds travel 4 rooms.
-    const claimerBody = [CLAIM, MOVE, MOVE];
+    // 3×CLAIM + 3×MOVE — 1950 energy.  Claims 3× faster (600 ticks instead of 1800).
+    const claimerBody = [CLAIM, CLAIM, CLAIM, MOVE, MOVE, MOVE];
     const bodyCost = getBodyCost(claimerBody);
     if (homeRoom.energyAvailable >= bodyCost) {
       requests.push({
