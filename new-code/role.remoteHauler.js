@@ -251,6 +251,11 @@ module.exports = {
       return;
     }
     if (remote.isRemotePaused(homeRoom, remoteRoom)) {
+      // Deliver energy home before retreating so it isn't trapped in the hauler.
+      if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        deliver(creep);
+        return;
+      }
       remote.retreat(creep, homeRoom);
       return;
     }
