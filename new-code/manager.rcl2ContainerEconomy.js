@@ -776,17 +776,18 @@ function run(room, state) {
     return;
   }
 
-  // Upgrader body builder: use room.energyAvailable so the spawn
-  // can always afford the body. The 50% floor check in bootstrap
-  // prevents spawning during deep dips; energyAvailable-based sizing
-  // ensures the body shrinks gracefully when energy is below capacity.
-  // Previous energyCapacityAvailable sizing produced bodies the spawn
-  // could not pay for (e.g. 1650-cost body with only 1150 available),
-  // causing silent spawn failures.
+  // Upgrader body builder: cap budget at 50% of room capacity so a
+  // single upgrader spawn never consumes all available energy. This
+  // leaves enough headroom for remote economy spawning (miners, haulers
+  // guards) which would otherwise be starved and age out.
+  // Floor of 300 ensures a minimum [W,C×2,M×2] body is possible.
   const upgraderBodyBuilder = function (energyCap, role, desiredWork) {
     if (role === 'rcl1Upgrader') {
+      var cappedEnergy = Math.floor(room.energyCapacityAvailable * 0.5);
+      if (cappedEnergy < 300) cappedEnergy = 300;
+      if (room.energyAvailable < cappedEnergy) cappedEnergy = room.energyAvailable;
       return bodyPolicy.buildStaticUpgraderBody(
-        room.energyAvailable,
+        cappedEnergy,
         desiredWork
       );
     }
