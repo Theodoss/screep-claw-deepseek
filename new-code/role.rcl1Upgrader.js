@@ -151,6 +151,29 @@ module.exports = {
       // withdraw failed (ERR_NOT_ENOUGH_ENERGY etc): fall through to storage
     }
 
+    // Source container fallback: when spawn/ext/storage are empty but
+    // source containers have buffered energy, walk to one and withdraw.
+    // Trades travel time for guaranteed energy access vs true idle.
+    const sourceContainers = creep.room.find(FIND_STRUCTURES, {
+      filter: function (s) {
+        return s.structureType === STRUCTURE_CONTAINER &&
+          s.store.getUsedCapacity(RESOURCE_ENERGY) > 200;
+      }
+    });
+    if (sourceContainers.length > 0) {
+      var closestSource = creep.pos.findClosestByPath(sourceContainers);
+      if (closestSource) {
+        creep.memory.task = 'withdraw:source-container-fallback';
+        var scResult = creep.withdraw(closestSource, RESOURCE_ENERGY);
+        if (scResult === ERR_NOT_IN_RANGE) {
+          creep.moveTo(closestSource, {
+            visualizePathStyle: { stroke: '#ffaa00' }
+          });
+        }
+        return;
+      }
+    }
+
     // Storage fallback (usually farther, deeper energy reserve)
     const storage = creep.room.storage;
     if (
