@@ -591,7 +591,11 @@ function isHomeEconomyStable(homeRoomName) {
     : {};
   const remoteEconMemory = remoteRoomMemory.economyAccounting || {};
   const storedEnergy = remoteEconMemory.storedEnergy || 0;
-  if (storedEnergy < 50000 && room.energyAvailable < room.energyCapacityAvailable) {
+  // Allow remote spawning when storedEnergy >= 20k so the colony
+  // can recover from dips without deadlocking.  Previously 50k blocked
+  // remote hauler replacement when reserves were only ~23k, causing
+  // energy to pile up in remote containers with no way home.
+  if (storedEnergy < 20000 && room.energyAvailable < room.energyCapacityAvailable) {
     return false;
   }
 
