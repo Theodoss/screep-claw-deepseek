@@ -2,8 +2,86 @@ const bodyPolicy = require('body.policy');
 const rcl1SourceSlots = require('manager.rcl1SourceSlots');
 const population = require('manager.population');
 
+const SNAPSHOT_INTERVAL = 20;
+const SNAPSHOT_MAX = 60;
+
+function recordEnergySnapshots() {
+  if (!Memory.agent) Memory.agent = {};
+  var snapshots = Memory.agent.energySnapshots;
+  if (!Array.isArray(snapshots)) {
+    snapshots = [];
+    Memory.agent.energySnapshots = snapshots;
+  }
+
+  var entry = { tick: Game.time, rooms: {} };
+  var totalAll = 0;
+
+  for (var roomName in Game.rooms) {
+    var room = Game.rooms[roomName];
+    var total = 0;
+
+    var spawns = room.find(FIND_MY_SPAWNS);
+    for (var si = 0; si < spawns.length; si++) {
+      total += spawns[si].store.getUsedCapacity(RESOURCE_ENERGY);
+    }
+
+    var extensions = room.find(FIND_MY_STRUCTURES, {
+      filter: function (s) { return s.structureType === STRUCTURE_EXTENSION; }
+    });
+    for (var ei = 0; ei < extensions.length; ei++) {
+      total += extensions[ei].store.getUsedCapacity(RESOURCE_ENERGY);
+    }
+
+    var containers = room.find(FIND_STRUCTURES, {
+      filter: function (s) { return s.structureType === STRUCTURE_CONTAINER; }
+    });
+    for (var ci = 0; ci < containers.length; ci++) {
+      total += containers[ci].store.getUsedCapacity(RESOURCE_ENERGY);
+    }
+
+    var links = room.find(FIND_MY_STRUCTURES, {
+      filter: function (s) { return s.structureType === STRUCTURE_LINK; }
+    });
+    for (var li = 0; li < links.length; li++) {
+      total += links[li].store.getUsedCapacity(RESOURCE_ENERGY);
+    }
+
+    if (room.storage) {
+      total += room.storage.store.getUsedCapacity(RESOURCE_ENERGY);
+    }
+
+    if (room.terminal) {
+      total += room.terminal.store.getUsedCapacity(RESOURCE_ENERGY);
+    }
+
+    var creeps = room.find(FIND_MY_CREEPS);
+    for (var cri = 0; cri < creeps.length; cri++) {
+      total += creeps[cri].store.getUsedCapacity(RESOURCE_ENERGY);
+    }
+
+    var towers = room.find(FIND_MY_STRUCTURES, {
+      filter: function (s) { return s.structureType === STRUCTURE_TOWER; }
+    });
+    for (var ti = 0; ti < towers.length; ti++) {
+      total += towers[ti].store.getUsedCapacity(RESOURCE_ENERGY);
+    }
+
+    entry.rooms[roomName] = total;
+    totalAll += total;
+  }
+
+  entry.total = totalAll;
+  snapshots.push(entry);
+
+  while (snapshots.length > SNAPSHOT_MAX) {
+    snapshots.shift();
+  }
+}
+
 module.exports = {
   collect: function () {
+    var previousSnapshots = Memory.agent && Memory.agent.energySnapshots;
+
     Memory.agent = {
       tick: Game.time,
       rooms: {},
@@ -15,6 +93,12 @@ module.exports = {
         used: 0
       }
     };
+
+    if (Array.isArray(previousSnapshots)) {
+      Memory.agent.energySnapshots = previousSnapshots;
+    }
+
+    recordEnergySnapshots();
 
     for (const roomName in Game.rooms) {
       const room = Game.rooms[roomName];
@@ -108,7 +192,6 @@ module.exports = {
       const plannedUpgraderWork = plannedUpgraderBody.filter(
         part => part === WORK
       ).length;
-      // Remote program context for this room
       const remoteHomeCfg = Memory.remote && Memory.remote[roomName];
       const remoteRoomsCfg = remoteHomeCfg && remoteHomeCfg.rooms ? remoteHomeCfg.rooms : {};
       let remoteRoomCnt = 0;
@@ -313,6 +396,5 @@ module.exports = {
     }
 
     Memory.agent.cpu.used = Game.cpu.getUsed();
-    console.log('[agent] state updated at tick', Game.time);
   }
 };
