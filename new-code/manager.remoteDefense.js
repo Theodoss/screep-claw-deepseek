@@ -5,6 +5,7 @@ const HOME_ROOM = 'W49N25';
 const CLEAR_TICKS = 50;           // consecutive ticks without hostiles before clearing threat
 const MAX_GUARDS_GLOBAL = 2;      // never more than 2 remoteGuards across all remotes
 const MAX_GUARDS_PER_ROOM = 1;    // never more than 1 guard per remote room
+const REPLACEMENT_TTL = 300;      // dispatch replacement when garrisoned guard TTL < this
 const DETECT_INTERVAL = 5;        // check remote rooms every 5 ticks
 
 function getHomeConfig() {
@@ -157,13 +158,69 @@ function getSpawnRequest(homeRoomName, remoteRoomName) {
   };
 }
 
+function getGarrisonReplacementRequest(homeRoomName, remoteRoomName) {
+  // Check if there's a garrisoned guard about to die in this room.
+  // Dispatch a replacement before the old guard expires so coverage is continuous.
+  let foundDying = false;
+  for (const name in Game.creeps) {
+    const creep = Game.creeps[name];
+    if (
+      creep.memory.role === 'remoteGuard' &&
+      creep.memory.targetRoom === remoteRoomName &&
+      creep.ticksToLive < REPLACEMENT_TTL
+    ) {
+      foundDying = true;
+      break;
+    }
+  }
+  if (!foundDying) return null;
+
+  // Don't dispatch if the remote already has a threat — threat-based dispatch
+  // has higher priority and the replacement isn't needed yet.
+  const homeConfig = getHomeConfig();
+  const remoteConfig = homeConfig && homeConfig.rooms
+    ? homeConfig.rooms[remoteRoomName]
+    : null;
+  if (isInvaderThreat(remoteConfig)) return null;
+
+  // Global limit check.
+  if (countGuards() >= MAX_GUARDS_GLOBAL) return null;
+
+  const room = Game.rooms[homeRoomName];
+  if (!room) return null;
+
+  const body = buildRemoteGuardBody(room.energyCapacityAvailable);
+  if (!body) return null;
+
+  return {
+    role: 'remoteGuard',
+    name: 'remoteGuard_' + remoteRoomName + '_' + Game.time,
+    body: body,
+    bodyCost: getBodyCost(body),
+    memory: {
+      role: 'remoteGuard',
+      home: homeRoomName,
+      homeRoom: homeRoomName,
+      targetRoom: remoteRoomName,
+      mission: 'garrisonReplacement'
+    }
+  };
+}
+
 function getAllSpawnRequests(homeRoomName) {
   const requests = [];
   const homeConfig = getHomeConfig();
   if (!homeConfig || !homeConfig.rooms) return requests;
 
+  // 1. Threat-based guard dispatch (highest priority)
   for (const roomName in homeConfig.rooms) {
     const req = getSpawnRequest(homeRoomName, roomName);
+    if (req) requests.push(req);
+  }
+
+  // 2. Garrison replacement: preemptively replace dying guards
+  for (const roomName in homeConfig.rooms) {
+    const req = getGarrisonReplacementRequest(homeRoomName, roomName);
     if (req) requests.push(req);
   }
 
