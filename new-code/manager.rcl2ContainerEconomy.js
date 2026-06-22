@@ -609,9 +609,22 @@ function run(room, state) {
     repairBacklog: emergencyRepair || generalRepair
   });
   const controllerContainer = economy.getControllerContainer(room);
-  const requestedUpgradeWork = controllerContainer
+  var requestedUpgradeWork = controllerContainer
     ? economyState.upgraderWorkTarget || 0
     : 0;
+
+  // Expansion mission: suspend home upgrade to funnel energy to expansion spawn.
+  // Exception: controller emergency (downgrade imminent) → keep minimum upgrade.
+  if (
+    Memory.expansionMission &&
+    Memory.expansionMission.active &&
+    Memory.expansionMission.phase !== 'done' &&
+    room.name === Memory.expansionMission.home &&
+    !economyState.controllerEmergency
+  ) {
+    requestedUpgradeWork = 0;
+  }
+
   const populationPlan = population.getPlan(
     controllerLevel,
     {

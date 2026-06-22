@@ -9,18 +9,6 @@ const REMOTE_ROAD_MAX_ACTIVE_SITES = 3;
 // Each remote room has its own source list.  x/y = source position,
 // containerX/Y = where the container should go (adjacent non-wall tile).
 // Sources and containers are discovered on first creep entry.
-// Expansion rooms: new colonies to claim.
-// Once claimed the rcl1Bootstrap manager takes over from the home spawn.
-const EXPANSION_TARGETS = {
-  W47N22: {
-    spawnX: 23,
-    spawnY: 9,
-    controllerX: 15,
-    controllerY: 39,
-    enabled: true
-  }
-};
-
 const REMOTE_ROOMS = {
   W49N26: [
     { id: null, x: 16, y: 26, roomName: 'W49N26', containerX: 16, containerY: 25, enabled: true },
@@ -941,65 +929,86 @@ function getSpawnRequests(homeRoomName) {
   const builderBody = buildRemoteBuilderBody(energyCapacity);
   const reserverBody = buildReserverBody(energyCapacity);
 
-  // ── Expansion claimers ──
-  for (const expRoomName in EXPANSION_TARGETS) {
-    const expConfig = EXPANSION_TARGETS[expRoomName];
-    if (!expConfig || !expConfig.enabled) continue;
+  // ── Expansion mission (Memory.expansionMission) ──
+  var mission = Memory.expansionMission;
+  if (mission && mission.active && mission.phase !== 'done') {
+    var target = mission.targetRoom;
+    var missionRoom = Game.rooms[target];
+    var controllerMine = missionRoom && missionRoom.controller && missionRoom.controller.my;
 
-    // Already claimed? Skip.
-    const expRoom = Game.rooms[expRoomName];
-    if (expRoom && expRoom.controller && expRoom.controller.my) {
-      continue;
+    // Phase transition: claim → build
+    if (mission.phase === 'claim' && controllerMine) {
+      mission.phase = 'build';
+      console.log('[expansion] ' + target + ' claimed! Phase → build');
+    }
+    // Phase transition: build → done
+    if (
+      mission.phase === 'build' &&
+      missionRoom &&
+      missionRoom.find(FIND_MY_SPAWNS).length > 0
+    ) {
+      mission.phase = 'done';
+      mission.active = false;
+      console.log('[expansion] ' + target + ' spawn built! Mission complete.');
     }
 
-    // Claimer: only if room not yet ours
-    if (!expRoom || !expRoom.controller || !expRoom.controller.my) {
-      if (countClaimers(expRoomName) > 0) continue;
-
-      // 3×CLAIM + 3×MOVE — 1950 energy.  Full speed on plains/road.
-      const claimerBody = [CLAIM, CLAIM, CLAIM, MOVE, MOVE, MOVE];
-      const bodyCost = getBodyCost(claimerBody);
-      if (homeRoom.energyAvailable >= bodyCost) {
+    if (mission.phase === 'claim' && homeRoom.energyAvailable >= 1700) {
+      // GCL gate: need enough GCL to claim another room
+      var ownedCount = 0;
+      for (var rn in Game.rooms) {
+        if (Game.rooms[rn].controller && Game.rooms[rn].controller.my) ownedCount++;
+      }
+      if (Game.gcl.level < ownedCount + 1) {
+        if (Game.time % 100 === 0) {
+          console.log('[expansion] GCL 不足，無法 claim ' + target + '，略過 claimer');
+        }
+      } else if (countClaimers(target) === 0) {
+        // 2×CLAIM + 10×MOVE — 1700 energy, swamp full-speed
+        var claimerBody = [
+          CLAIM, CLAIM,
+          MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+        ];
         requests.push({
           role: 'claimer',
-          name: `claimer_${expRoomName}_${Game.time}`,
+          name: 'claimer_' + target + '_' + Game.time,
           body: claimerBody,
           memory: {
             role: 'claimer',
             home: homeRoomName,
-            targetRoom: expRoomName,
-            remoteRoom: expRoomName,
-            signText: 'Theodos colony'
+            targetRoom: target,
+            remoteRoom: target,
+            signText: mission.signText || 'Theodos colony'
           }
         });
-        console.log(`[expansion] claimer queued for ${expRoomName}`);
+        console.log('[expansion] claimer queued for ' + target);
       }
-      continue;
     }
 
-    // Pioneer: room is claimed — send builder if construction sites exist
-    const sites = expRoom.find(FIND_MY_CONSTRUCTION_SITES);
-    if (sites.length > 0 && countCreepsInRole('pioneer', expRoomName) === 0) {
-      // Large builder: 6 WORK + 6 CARRY + 12 MOVE = 1500 energy
-      const pioneerBody = [
-        WORK, WORK, WORK, WORK, WORK, WORK,
-        CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+    if (mission.phase === 'build') {
+      var builderCount = mission.builderCount || 0;
+      var currentPioneers = countCreepsInRole('pioneer', target);
+      // 5×WORK + 4×CARRY + 5×MOVE — 950 energy
+      var pioneerBody = [
+        WORK, WORK, WORK, WORK, WORK,
+        CARRY, CARRY, CARRY, CARRY,
+        MOVE, MOVE, MOVE, MOVE, MOVE
       ];
-      if (homeRoom.energyAvailable >= getBodyCost(pioneerBody)) {
+      if (currentPioneers < builderCount && homeRoom.energyAvailable >= 950) {
         requests.push({
           role: 'pioneer',
-          name: `pioneer_${expRoomName}_${Game.time}`,
+          name: 'pioneer_' + target + '_' + Game.time,
           body: pioneerBody,
           memory: {
             role: 'pioneer',
             home: homeRoomName,
-            targetRoom: expRoomName,
-            remoteRoom: expRoomName
+            targetRoom: target,
+            remoteRoom: target
           }
         });
-        console.log(`[expansion] pioneer queued for ${expRoomName}`);
+        console.log(
+          '[expansion] pioneer queued for ' + target +
+          ' (' + (currentPioneers + 1) + '/' + builderCount + ')'
+        );
       }
     }
   }

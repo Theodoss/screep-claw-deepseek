@@ -24,6 +24,39 @@ function acquireFallbackEnergy(creep) {
 
 module.exports = {
   run: function (creep) {
+    // ── Expansion guard: stop upgrading home, funnel energy to spawn/extensions ──
+    var mission = Memory.expansionMission;
+    if (
+      mission &&
+      mission.active &&
+      mission.phase !== 'done' &&
+      mission.home === creep.room.name
+    ) {
+      var controllerEmergency =
+        creep.room.controller &&
+        typeof creep.room.controller.ticksToDowngrade === 'number' &&
+        creep.room.controller.ticksToDowngrade < 4000;
+      if (!controllerEmergency) {
+        if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+          var target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+            filter: function (s) {
+              return (
+                s.structureType === STRUCTURE_SPAWN ||
+                s.structureType === STRUCTURE_EXTENSION
+              ) && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+            }
+          });
+          if (target) {
+            if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+              creep.moveTo(target);
+            }
+            return;
+          }
+        }
+        return;
+      }
+    }
+
     if (
       creep.memory.working &&
       creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0
