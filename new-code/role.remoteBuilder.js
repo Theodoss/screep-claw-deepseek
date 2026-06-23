@@ -3,6 +3,49 @@ const remote = require('manager.remote');
 var ROAD_REPAIR_START = 0.4;   // repair when hits < 40%
 var ROAD_REPAIR_STOP  = 0.9;   // stop when hits > 90%
 
+function rememberWork(creep, work) {
+  if (!work || !work.target || !work.target.id) return work;
+  creep.memory.remoteBuilderWork = {
+    id: work.target.id,
+    type: work.type,
+    tick: Game.time
+  };
+  return work;
+}
+
+function getCachedWork(creep) {
+  var cached = creep.memory.remoteBuilderWork;
+  if (!cached || !cached.id || !cached.type) return null;
+
+  var target = Game.getObjectById(cached.id);
+  if (!target) {
+    delete creep.memory.remoteBuilderWork;
+    return null;
+  }
+
+  if (cached.type === 'repair') {
+    if (Game.time - (cached.tick || 0) > 10) {
+      delete creep.memory.remoteBuilderWork;
+      return null;
+    }
+    if (
+      target.structureType !== STRUCTURE_ROAD ||
+      target.hits >= target.hitsMax * ROAD_REPAIR_STOP
+    ) {
+      delete creep.memory.remoteBuilderWork;
+      return null;
+    }
+  } else if (cached.type !== 'build') {
+    delete creep.memory.remoteBuilderWork;
+    return null;
+  }
+
+  return {
+    target: target,
+    type: cached.type
+  };
+}
+
 // Get highest-priority work in the remote room.
 // Priority: road construction > container construction > link construction
 //            > other construction sites > road repair.
@@ -17,10 +60,9 @@ function getRemoteWork(creep, remoteConfig) {
     }
   });
   if (roadSites.length > 0) {
-    var closestRoad = creep.pos.findClosestByPath(roadSites) ||
-      creep.pos.findClosestByRange(roadSites) ||
+    var closestRoad = creep.pos.findClosestByRange(roadSites) ||
       roadSites[0];
-    return { target: closestRoad, type: 'build' };
+    return rememberWork(creep, { target: closestRoad, type: 'build' });
   }
 
   // 2. Container construction sites
@@ -32,7 +74,9 @@ function getRemoteWork(creep, remoteConfig) {
       sourceConfig.containerX,
       sourceConfig.containerY
     );
-    if (site) return { target: site, type: 'build' };
+    if (site) {
+      return rememberWork(creep, { target: site, type: 'build' });
+    }
   }
 
   // 3. Link construction sites (if any in room)
@@ -42,19 +86,17 @@ function getRemoteWork(creep, remoteConfig) {
     }
   });
   if (linkSites.length > 0) {
-    var closestLink = creep.pos.findClosestByPath(linkSites) ||
-      creep.pos.findClosestByRange(linkSites) ||
+    var closestLink = creep.pos.findClosestByRange(linkSites) ||
       linkSites[0];
-    return { target: closestLink, type: 'build' };
+    return rememberWork(creep, { target: closestLink, type: 'build' });
   }
 
   // 4. Other construction sites
   var otherSites = creep.room.find(FIND_CONSTRUCTION_SITES);
   if (otherSites.length > 0) {
-    var closestOther = creep.pos.findClosestByPath(otherSites) ||
-      creep.pos.findClosestByRange(otherSites) ||
+    var closestOther = creep.pos.findClosestByRange(otherSites) ||
       otherSites[0];
-    return { target: closestOther, type: 'build' };
+    return rememberWork(creep, { target: closestOther, type: 'build' });
   }
 
   // 5. Road repair (only roads, not containers/ramparts/walls)
@@ -65,11 +107,9 @@ function getRemoteWork(creep, remoteConfig) {
     }
   });
   if (roads.length > 0) {
-    // Prioritize roads near sources and exits (closest by path)
-    var closest = creep.pos.findClosestByPath(roads) ||
-      creep.pos.findClosestByRange(roads) ||
+    var closest = creep.pos.findClosestByRange(roads) ||
       roads[0];
-    return { target: closest, type: 'repair' };
+    return rememberWork(creep, { target: closest, type: 'repair' });
   }
 
   return null;
@@ -78,7 +118,6 @@ function getRemoteWork(creep, remoteConfig) {
 function closestTarget(creep, targets) {
   if (targets.length === 0) return null;
   return (
-    creep.pos.findClosestByPath(targets) ||
     creep.pos.findClosestByRange(targets) ||
     targets[0]
   );
@@ -318,7 +357,7 @@ module.exports = {
       return;
     }
 
-    var work = getRemoteWork(creep, remoteConfig);
+    var work = getCachedWork(creep) || getRemoteWork(creep, remoteConfig);
     if (!work) {
       retireToHomeBuilder(creep);
       return;

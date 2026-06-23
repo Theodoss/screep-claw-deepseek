@@ -3,6 +3,7 @@ const SHORT_WINDOW = 300;
 const LONG_WINDOW = 1500;
 const MAX_SAMPLES = 40;
 const CONTROLLER_EMERGENCY_TICKS = 4000;
+const roomRuntimeCache = {};
 
 function ensureRoomMemory(roomName) {
   if (!Memory.rooms) Memory.rooms = {};
@@ -20,6 +21,19 @@ function ensureRoomMemory(roomName) {
   }
 
   return roomMemory.economyAccounting;
+}
+
+function getRoomCache(room) {
+  const cached = roomRuntimeCache[room.name];
+  if (cached && cached.tick === Game.time) return cached;
+
+  const next = {
+    tick: Game.time,
+    structures: room.find(FIND_STRUCTURES),
+    upgradeContainers: null
+  };
+  roomRuntimeCache[room.name] = next;
+  return next;
 }
 
 function getBodyCost(creep) {
@@ -45,7 +59,7 @@ function recordHarvest(roomName, amount) {
 
 function getStoredEnergy(room, creeps) {
   let total = 0;
-  const structures = room.find(FIND_STRUCTURES);
+  const structures = getRoomCache(room).structures;
 
   for (const structure of structures) {
     if (
@@ -346,14 +360,16 @@ function getUpgradeContainers(room) {
   // nearby. Upgraders pick from these; haulers deliver to them.
   if (!room.controller) return [];
 
-  return room.find(FIND_STRUCTURES, {
-    filter: function (structure) {
-      return (
-        structure.structureType === STRUCTURE_CONTAINER &&
-        structure.pos.getRangeTo(room.controller) <= UPGRADE_CONTAINER_RANGE
-      );
-    }
+  const cache = getRoomCache(room);
+  if (cache.upgradeContainers) return cache.upgradeContainers;
+
+  cache.upgradeContainers = cache.structures.filter(function (structure) {
+    return (
+      structure.structureType === STRUCTURE_CONTAINER &&
+      structure.pos.getRangeTo(room.controller) <= UPGRADE_CONTAINER_RANGE
+    );
   });
+  return cache.upgradeContainers;
 }
 
 function getControllerContainer(room) {
