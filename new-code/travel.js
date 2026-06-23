@@ -387,11 +387,11 @@ module.exports = {
           return true;
         }
       }
-      // Wrong edge — push back to center
-      creep.moveTo(new RoomPosition(25, 25, creep.pos.roomName), {
-        reusePath: 5, swampCost: 5,
-        visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
-      });
+      // Wrong edge — push one tile inward (no pathfinding)
+      if (creep.pos.y === 49)       creep.move(TOP);
+      else if (creep.pos.y === 0)   creep.move(BOTTOM);
+      else if (creep.pos.x === 49)  creep.move(LEFT);
+      else if (creep.pos.x === 0)   creep.move(RIGHT);
       t.lastResult = 'border';
       debugLog(creep, t, nextRoom);
       return true;
@@ -424,22 +424,32 @@ module.exports = {
       }
     }
 
-    // ── Advance route index ──
-    var prevRoom = (t.routeIdx < t.route.length)
-      ? t.route[t.routeIdx] : null;
-    while (
-      t.routeIdx < t.route.length &&
-      creep.pos.roomName === t.route[t.routeIdx]
-    ) {
-      t.routeIdx++;
-    }
+    // ── Recalculate routeIdx from creep's current room ──
+    if (t.route) {
+      var currentIndex = t.route.indexOf(creep.pos.roomName);
+      if (currentIndex === -1) {
+        // Creep is in a room not on the route — rebuild
+        delete t.route;
+        delete t.routeIdx;
+        delete t.path;
+        delete t.pathIdx;
+        delete t._pathRoom;
+        t.pathAge = 0;
+      } else {
+        // Previous room (before advancement) for path invalidation
+        var prevRoom = (t.routeIdx < t.route.length)
+          ? t.route[t.routeIdx] : null;
+        t.routeIdx = currentIndex + 1;
 
-    // Room changed → invalidate tile path (path was for previous room)
-    if (prevRoom && creep.pos.roomName !== prevRoom) {
-      delete t.path;
-      delete t.pathIdx;
-      delete t._pathRoom;
-      t.pathAge = 0;
+        // Room changed → invalidate tile path
+        if (prevRoom !== null && t.routeIdx > 0 &&
+            currentIndex !== t.routeIdx - 1) {
+          delete t.path;
+          delete t.pathIdx;
+          delete t._pathRoom;
+          t.pathAge = 0;
+        }
+      }
     }
 
     nextRoom = (t.routeIdx < t.route.length) ? t.route[t.routeIdx] : null;
@@ -482,12 +492,23 @@ module.exports = {
     if (
       t._pathTargetRoom !== targetRoom ||
       getNavFingerprint() !== t._navFingerprint ||
-      t.stuck > PATH_STUCK_LIMIT ||
       (t._pathRoom && creep.pos.roomName !== t._pathRoom)
     ) {
       delete t.path;
       delete t.pathIdx;
       delete t._pathRoom;
+      t.pathAge = 0;
+    }
+
+    // Stuck too long → full route + path reset
+    if (t.stuck > PATH_STUCK_LIMIT) {
+      delete t.route;
+      delete t.routeIdx;
+      delete t.fromRoom;
+      delete t.path;
+      delete t.pathIdx;
+      delete t._pathRoom;
+      t.stuck = 0;
       t.pathAge = 0;
     }
 
