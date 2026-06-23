@@ -81,6 +81,7 @@ function recordEnergySnapshots() {
 module.exports = {
   collect: function () {
     var previousSnapshots = Memory.agent && Memory.agent.energySnapshots;
+    var previousCpuProfile = Memory.agent && Memory.agent.cpuProfile;
 
     Memory.agent = {
       tick: Game.time,
@@ -96,6 +97,9 @@ module.exports = {
 
     if (Array.isArray(previousSnapshots)) {
       Memory.agent.energySnapshots = previousSnapshots;
+    }
+    if (previousCpuProfile) {
+      Memory.agent.cpuProfile = previousCpuProfile;
     }
 
     recordEnergySnapshots();

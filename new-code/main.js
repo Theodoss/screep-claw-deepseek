@@ -22,6 +22,7 @@ const remoteDefense = require('manager.remoteDefense');
 const stats = require('manager.stats');
 const intel = require('manager.intel');
 const errorReporter = require('core.errorReporter');
+const cpuProfiler = require('core.cpuProfiler');
 const rcl1SourceSlots = require('manager.rcl1SourceSlots');
 const towerManager = require('manager.tower');
 const roomPlanner = require('planner.roomPlanner');
@@ -58,7 +59,13 @@ const ROLE_MODULES = {
 
 function runBootstrapFallback(room) {
   try {
-    rcl1Bootstrap.run(room);
+    cpuProfiler.measureRoom(
+      'manager.rcl1Bootstrap',
+      room.name,
+      function () {
+        rcl1Bootstrap.run(room);
+      }
+    );
   } catch (err) {
     errorReporter.capture(err, {
       module: 'manager.rcl1Bootstrap',
@@ -105,8 +112,12 @@ function activateRoomPlanner(roomName) {
 }
 
 module.exports.loop = function () {
+  cpuProfiler.begin();
+
   try {
-    military.update(false);
+    cpuProfiler.measure('manager.military.update', function () {
+      military.update(false);
+    });
   } catch (err) {
     errorReporter.capture(err, {
       module: 'manager.military.update'
@@ -114,46 +125,56 @@ module.exports.loop = function () {
   }
 
   // 1. 清掉已死亡 creep 的 Memory，避免 Memory 越來越髒
-  for (const name in Memory.creeps) {
-    if (!Game.creeps[name]) {
-      rcl1SourceSlots.releaseCreep(name);
-      delete Memory.creeps[name];
-      console.log('[memory] cleared dead creep:', name);
+  cpuProfiler.measure('memory.cleanup', function () {
+    for (const name in Memory.creeps) {
+      if (!Game.creeps[name]) {
+        rcl1SourceSlots.releaseCreep(name);
+        delete Memory.creeps[name];
+        console.log('[memory] cleared dead creep:', name);
+      }
     }
-  }
+  });
 
   // 舊角色就地遷移，避免切換 manager 後現存 creep 停擺。
-  for (const name in Game.creeps) {
-    const creep = Game.creeps[name];
-    if (LEGACY_ROLES[creep.memory.role]) {
-      creep.memory.role = LEGACY_ROLES[creep.memory.role];
+  cpuProfiler.measure('memory.legacyRoles', function () {
+    for (const name in Game.creeps) {
+      const creep = Game.creeps[name];
+      if (LEGACY_ROLES[creep.memory.role]) {
+        creep.memory.role = LEGACY_ROLES[creep.memory.role];
+      }
     }
-  }
+  });
 
   // 2. Remote spawning: run FIRST so remote creeps get spawn priority.
   // isHomeEconomyStable ensures home economy is healthy before we steal the spawn.
   try {
-    remoteDefense.run();
-    remote.run();
+    cpuProfiler.measure('manager.remoteDefense.run', function () {
+      remoteDefense.run();
+    });
+    cpuProfiler.measure('manager.remote.run', function () {
+      remote.run();
+    });
 
-    const defenseRequests = remoteDefense.getAllSpawnRequests('W49N25');
-    if (defenseRequests.length > 0) {
-      const homeRoom = Game.rooms['W49N25'];
-      if (homeRoom) {
-        const spawn = homeRoom.find(FIND_MY_SPAWNS)[0];
-        if (spawn && !spawn.spawning) {
-          const req = defenseRequests[0];
-          if (homeRoom.energyAvailable >= req.bodyCost) {
-            const result = spawn.spawnCreep(req.body, req.name, {
-              memory: req.memory
-            });
-            if (result === OK) {
-              console.log('[defense] spawned ' + req.name);
+    cpuProfiler.measure('manager.remoteDefense.spawn', function () {
+      const defenseRequests = remoteDefense.getAllSpawnRequests('W49N25');
+      if (defenseRequests.length > 0) {
+        const homeRoom = Game.rooms['W49N25'];
+        if (homeRoom) {
+          const spawn = homeRoom.find(FIND_MY_SPAWNS)[0];
+          if (spawn && !spawn.spawning) {
+            const req = defenseRequests[0];
+            if (homeRoom.energyAvailable >= req.bodyCost) {
+              const result = spawn.spawnCreep(req.body, req.name, {
+                memory: req.memory
+              });
+              if (result === OK) {
+                console.log('[defense] spawned ' + req.name);
+              }
             }
           }
         }
       }
-    }
+    });
   } catch (err) {
     errorReporter.capture(err, {
       module: 'manager.remote'
@@ -166,11 +187,19 @@ module.exports.loop = function () {
     let economyState;
 
     if (Game.time % 20 === 0) {
-      rcl1SourceSlots.cleanup(room);
+      cpuProfiler.measureRoom(
+        'manager.rcl1SourceSlots.cleanup',
+        roomName,
+        function () {
+          rcl1SourceSlots.cleanup(room);
+        }
+      );
     }
 
     try {
-      towerManager.run(room);
+      cpuProfiler.measureRoom('manager.tower', roomName, function () {
+        towerManager.run(room);
+      });
     } catch (err) {
       errorReporter.capture(err, {
         module: 'manager.tower',
@@ -180,8 +209,14 @@ module.exports.loop = function () {
 
     if (ROOM_PLANNER_ENABLED) {
       try {
-        activateRoomPlanner(roomName);
-        roomPlanner.run(room);
+        cpuProfiler.measureRoom(
+          'planner.roomPlanner',
+          roomName,
+          function () {
+            activateRoomPlanner(roomName);
+            roomPlanner.run(room);
+          }
+        );
       } catch (err) {
         errorReporter.capture(err, {
           module: 'planner.roomPlanner',
@@ -192,13 +227,19 @@ module.exports.loop = function () {
 
     // Front-base construction: place sites from Memory.rooms[name].plan
     try {
-      var plan = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].plan;
-      if (!plan && shouldAutoPlanFrontBase(room)) {
-        plan = frontBasePlanner.init(roomName);
-      }
-      if (plan && plan.type === 'frontBase') {
-        construction.run(roomName);
-      }
+      cpuProfiler.measureRoom(
+        'manager.construction',
+        roomName,
+        function () {
+          var plan = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].plan;
+          if (!plan && shouldAutoPlanFrontBase(room)) {
+            plan = frontBasePlanner.init(roomName);
+          }
+          if (plan && plan.type === 'frontBase') {
+            construction.run(roomName);
+          }
+        }
+      );
     } catch (err) {
       errorReporter.capture(err, {
         module: 'manager.construction',
@@ -207,7 +248,13 @@ module.exports.loop = function () {
     }
 
     try {
-      economyState = rcl2ContainerEconomy.collect(room);
+      economyState = cpuProfiler.measureRoom(
+        'manager.rcl2ContainerEconomy.collect',
+        roomName,
+        function () {
+          return rcl2ContainerEconomy.collect(room);
+        }
+      );
     } catch (err) {
       errorReporter.capture(err, {
         module: 'manager.rcl2ContainerEconomy.collect',
@@ -223,7 +270,13 @@ module.exports.loop = function () {
     }
 
     try {
-      rcl2ContainerEconomy.run(room, economyState);
+      cpuProfiler.measureRoom(
+        'manager.rcl2ContainerEconomy.run',
+        roomName,
+        function () {
+          rcl2ContainerEconomy.run(room, economyState);
+        }
+      );
     } catch (err) {
       errorReporter.capture(err, {
         module: 'manager.rcl2ContainerEconomy.run',
@@ -233,7 +286,13 @@ module.exports.loop = function () {
     }
 
     try {
-      military.trySpawn(room);
+      cpuProfiler.measureRoom(
+        'manager.military.trySpawn',
+        roomName,
+        function () {
+          military.trySpawn(room);
+        }
+      );
     } catch (err) {
       errorReporter.capture(err, {
         module: 'manager.military.trySpawn',
@@ -249,7 +308,14 @@ module.exports.loop = function () {
     try {
       const roleModule = ROLE_MODULES[creep.memory.role];
       if (roleModule) {
-        roleModule.run(creep);
+        cpuProfiler.measureRole(
+          creep.memory.role || 'unknown',
+          creep.room.name,
+          creep.name,
+          function () {
+            roleModule.run(creep);
+          }
+        );
       } else {
         console.log('[warn] unknown role:', creep.name, creep.memory.role);
       }
@@ -268,13 +334,17 @@ module.exports.loop = function () {
 
   // 5. 每 20 tick 輸出給 Codex / 外部 agent 看的狀態
   if (Game.time % 20 === 0) {
-    stats.collect();
+    cpuProfiler.measure('manager.stats.collect', function () {
+      stats.collect();
+    });
   }
 
   // 6. 每 100 tick 記錄目前有視野的房間態勢
   if (Game.time % 100 === 0) {
     try {
-      intel.collectVisibleRooms();
+      cpuProfiler.measure('manager.intel.collectVisibleRooms', function () {
+        intel.collectVisibleRooms();
+      });
     } catch (err) {
       errorReporter.capture(err, {
         module: 'manager.intel'
@@ -286,9 +356,13 @@ module.exports.loop = function () {
   try {
     var w49n25 = Game.rooms['W49N25'];
     if (w49n25) {
-      linkManager.run(w49n25);
+      cpuProfiler.measureRoom('manager.link', 'W49N25', function () {
+        linkManager.run(w49n25);
+      });
     }
   } catch (err) {
     errorReporter.capture(err, { module: 'manager.link' });
   }
+
+  cpuProfiler.end();
 };
