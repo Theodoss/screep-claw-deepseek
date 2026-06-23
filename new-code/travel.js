@@ -109,10 +109,15 @@ function findExitTile(currentRoom, nextRoom) {
 // Move toward a specific exit edge within the current room.
 // Uses intra-room moveTo only (target is in same room) so the
 // pathfinder cannot optimize across multiple rooms.
+// Falls back to cross-room moveTo if findExitTile fails.
 function moveToExit(creep, currentRoom, nextRoom, opts) {
   var exitPos = findExitTile(currentRoom, nextRoom);
   if (exitPos) {
     creep.moveTo(exitPos, opts);
+  } else {
+    // Fallback: direct cross-room moveTo keeps the creep moving
+    // even when the exit edge cannot be determined.
+    creep.moveTo(new RoomPosition(25, 25, nextRoom), opts);
   }
 }
 
@@ -197,6 +202,23 @@ module.exports = {
         swampCost: 5,
         visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
       });
+      return true;
+    }
+
+    // ── Verify route is still valid (creep in a room on the route) ──
+    var onRoute = false;
+    for (var ri = t.routeIdx; ri < t.route.length; ri++) {
+      if (creep.pos.roomName === t.route[ri]) {
+        t.routeIdx = ri;
+        onRoute = true;
+        break;
+      }
+    }
+    if (!onRoute) {
+      // Creep is off-route (stale _t from old code or unexpected room).
+      // Rebuild from scratch.
+      delete t.route;
+      delete t.routeIdx;
       return true;
     }
 
