@@ -1033,16 +1033,22 @@ function getSpawnRequests(homeRoomName) {
       }
     }
 
-    if (mission.phase === 'build') {
+    // Spawn pioneers as soon as claimer is en-route (not just after claim succeeds).
+    // This way pioneers arrive around the same time as the claimer.
+    var shouldSpawnPioneers =
+      mission.phase === 'build' ||
+      (mission.phase === 'claim' && countClaimers(target) > 0);
+
+    if (shouldSpawnPioneers) {
       var builderCount = mission.builderCount || 0;
       var currentPioneers = countCreepsInRole('pioneer', target);
-      // 5×WORK + 4×CARRY + 5×MOVE — 950 energy
+      // 6×WORK + 3×CARRY + 3×MOVE — 900 energy
       var pioneerBody = [
-        WORK, WORK, WORK, WORK, WORK,
-        CARRY, CARRY, CARRY, CARRY,
-        MOVE, MOVE, MOVE, MOVE, MOVE
+        WORK, WORK, WORK, WORK, WORK, WORK,
+        CARRY, CARRY, CARRY,
+        MOVE, MOVE, MOVE
       ];
-      if (currentPioneers < builderCount && homeRoom.energyAvailable >= 950) {
+      if (currentPioneers < builderCount && homeRoom.energyAvailable >= 900) {
         requests.push({
           role: 'pioneer',
           name: 'pioneer_' + target + '_' + Game.time,
