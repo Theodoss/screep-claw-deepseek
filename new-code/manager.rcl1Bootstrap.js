@@ -15,6 +15,23 @@ function countRole(creeps, role) {
   return count;
 }
 
+function belongsToRoom(creep, roomName) {
+  if (!creep || !creep.memory) return false;
+  return creep.memory.home === roomName ||
+    (!creep.memory.home && creep.room && creep.room.name === roomName);
+}
+
+function getHomeCreeps(room) {
+  const creeps = [];
+
+  for (const name in Game.creeps) {
+    const creep = Game.creeps[name];
+    if (belongsToRoom(creep, room.name)) creeps.push(creep);
+  }
+
+  return creeps;
+}
+
 function getUpgraderState(creeps, spawn, room) {
   let count = 0;
   let healthyWork = 0;
@@ -141,7 +158,7 @@ function run(room, options) {
   const spawn = spawns[0];
   if (spawn.spawning) return false;
 
-  const creeps = room.find(FIND_MY_CREEPS);
+  const creeps = getHomeCreeps(room);
   const sourceIds = settings.sourceIds;
   const maintainSupport = settings.maintainSupport !== false;
   const harvesters = getHarvesterState(creeps, sourceIds);

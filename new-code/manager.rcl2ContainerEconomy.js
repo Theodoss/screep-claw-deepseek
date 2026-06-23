@@ -417,6 +417,23 @@ function getCreepsByRole(creeps, role) {
   return creeps.filter(creep => creep.memory.role === role);
 }
 
+function belongsToRoom(creep, roomName) {
+  if (!creep || !creep.memory) return false;
+  return creep.memory.home === roomName ||
+    (!creep.memory.home && creep.room && creep.room.name === roomName);
+}
+
+function getHomeCreeps(room) {
+  const creeps = [];
+
+  for (const name in Game.creeps) {
+    const creep = Game.creeps[name];
+    if (belongsToRoom(creep, room.name)) creeps.push(creep);
+  }
+
+  return creeps;
+}
+
 function updateMinerNames(state, miners) {
   for (const sourceEntry of state.readySources) {
     const sourceMiners = miners.filter(
@@ -504,7 +521,7 @@ function findSourceWithoutMiner(state, miners) {
 
 function run(room, state) {
   const spawns = room.find(FIND_MY_SPAWNS);
-  const creeps = room.find(FIND_MY_CREEPS);
+  const creeps = getHomeCreeps(room);
   const rcl1Harvesters = getCreepsByRole(creeps, 'rcl1Harvester');
   const miners = getCreepsByRole(creeps, 'rcl2Miner');
   const haulers = getCreepsByRole(creeps, 'rcl2Hauler');

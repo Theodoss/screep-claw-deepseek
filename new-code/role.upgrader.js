@@ -24,8 +24,23 @@ function acquireFallbackEnergy(creep) {
   }
 }
 
+function getLocalLink(link, roomName) {
+  if (!link || !link.pos || link.pos.roomName !== roomName) return null;
+  return link;
+}
+
 module.exports = {
   run: function (creep) {
+    var homeRoomName = creep.memory.home || creep.memory.homeRoom;
+    if (homeRoomName && creep.room.name !== homeRoomName) {
+      creep.memory.task = 'travel:home-room';
+      creep.moveTo(new RoomPosition(25, 25, homeRoomName), {
+        reusePath: 20,
+        visualizePathStyle: { stroke: '#ffaa00' }
+      });
+      return;
+    }
+
     // ── Colony state / expansion guard: stop upgrading, funnel energy to spawn/extensions ──
     var mission = Memory.expansionMission;
     var redirectEnergy =
@@ -80,7 +95,10 @@ module.exports = {
       // spend one tick refilling the container buffer (lower priority than upgrading,
       // but prevents upgrade stall when link cooldown or remote flow interrupts).
       if (!economyState.recovery) {
-        var fillLink = linkManager.getLinkById(linkManager.LINK_IDS.upgrader);
+        var fillLink = getLocalLink(
+          linkManager.getLinkById(linkManager.LINK_IDS.upgrader),
+          creep.room.name
+        );
         var fillContainer = economy.getControllerContainer(creep.room);
         if (
           fillLink && fillContainer &&
@@ -112,7 +130,10 @@ module.exports = {
     }
 
     // Priority 1: upgrader link (fastest refill — no walking)
-    var upgraderLink = linkManager.getLinkById(linkManager.LINK_IDS.upgrader);
+    var upgraderLink = getLocalLink(
+      linkManager.getLinkById(linkManager.LINK_IDS.upgrader),
+      creep.room.name
+    );
     if (
       !economyState.recovery &&
       upgraderLink &&
