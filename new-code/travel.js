@@ -165,9 +165,65 @@ function buildCostMatrix(roomName, singleRoom) {
   return costs;
 }
 
+// ── Project entry coordinate onto exit edge ──
+// Given where the creep entered the room and which exit to take,
+// compute the ideal exit tile coordinate (diagonal projection).
+// Example: enter BOTTOM at x=27, exit RIGHT → goal near (49,27)
+function projectExitCoord(entryX, entryY, enterDir, exitDir) {
+  if (!enterDir) {
+    return { x: entryX, y: entryY };
+  }
+
+  var projX, projY;
+
+  if (exitDir === FIND_EXIT_LEFT) {
+    projX = 0;
+    projY = (enterDir === FIND_EXIT_BOTTOM || enterDir === FIND_EXIT_TOP)
+      ? Math.max(1, Math.min(48, entryX))
+      : Math.max(1, Math.min(48, entryY));
+  } else if (exitDir === FIND_EXIT_RIGHT) {
+    projX = 49;
+    projY = (enterDir === FIND_EXIT_BOTTOM || enterDir === FIND_EXIT_TOP)
+      ? Math.max(1, Math.min(48, entryX))
+      : Math.max(1, Math.min(48, entryY));
+  } else if (exitDir === FIND_EXIT_TOP) {
+    projY = 0;
+    projX = (enterDir === FIND_EXIT_LEFT || enterDir === FIND_EXIT_RIGHT)
+      ? Math.max(1, Math.min(48, entryY))
+      : Math.max(1, Math.min(48, entryX));
+  } else {
+    projY = 49;
+    projX = (enterDir === FIND_EXIT_LEFT || enterDir === FIND_EXIT_RIGHT)
+      ? Math.max(1, Math.min(48, entryY))
+      : Math.max(1, Math.min(48, entryX));
+  }
+
+  return { x: projX, y: projY };
+}
+
+// ── Select N candidate exit tiles nearest the projected point ──
+function selectCandidates(exits, projected, maxCandidates) {
+  var indexed = [];
+  for (var i = 0; i < exits.length; i++) {
+    var dx = exits[i].x - projected.x;
+    var dy = exits[i].y - projected.y;
+    indexed.push({ pos: exits[i], dist: dx * dx + dy * dy });
+  }
+  indexed.sort(function (a, b) { return a.dist - b.dist; });
+
+  var candidates = [];
+  for (var i = 0; i < Math.min(maxCandidates, indexed.length); i++) {
+    candidates.push(indexed[i].pos);
+  }
+  return candidates;
+}
+
 // ── Compute PathFinder path to EXIT TILES in current room ──
+// Uses corridor-aware exit planning: projects entry coordinate onto
+// the exit edge, tries multiple candidate exit tiles, and picks the
+// one with the shortest valid PathFinder path.
 // Returns [{x,y,roomName}] or null.
-function computeStepPath(creep, nextRoom) {
+function computeStepPath(creep, nextRoom, enterDir) {
   var currentRoom = creep.pos.roomName;
 
   var exitDir = Game.map.findExit(currentRoom, nextRoom);
@@ -179,37 +235,64 @@ function computeStepPath(creep, nextRoom) {
   var exits = room.find(exitDir);
   if (!exits || exits.length === 0) return null;
 
-  var goals = [];
-  for (var i = 0; i < exits.length; i++) {
-    goals.push({ pos: exits[i], range: 0 });
-  }
-
-  var selfRoom = currentRoom;
-  var result = PathFinder.search(
-    creep.pos,
-    goals,
-    {
-      roomCallback: function (roomName) {
-        return buildCostMatrix(roomName, selfRoom);
-      },
-      maxRooms: 1,
-      plainCost: 2,
-      swampCost: 5,
-      maxOps: 10000
-    }
+  // Project entry coordinate onto exit edge
+  var projected = projectExitCoord(
+    creep.pos.x, creep.pos.y, enterDir, exitDir
   );
 
-  if (result.incomplete || !result.path || result.path.length === 0) {
-    return null;
+  // Select candidate exit tiles near the projection
+  var candidates = selectCandidates(exits, projected, 8);
+
+  // Try each candidate, pick shortest valid PathFinder path
+  var selfRoom = currentRoom;
+  var bestPath = null;
+  var bestLen = Infinity;
+  var selectedGoal = null;
+
+  for (var ci = 0; ci < candidates.length; ci++) {
+    var result = PathFinder.search(
+      creep.pos,
+      [{ pos: candidates[ci], range: 0 }],
+      {
+        roomCallback: function (roomName) {
+          return buildCostMatrix(roomName, selfRoom);
+        },
+        maxRooms: 1,
+        plainCost: 2,
+        swampCost: 5,
+        maxOps: 8000
+      }
+    );
+
+    if (!result.incomplete && result.path && result.path.length < bestLen) {
+      bestPath = result.path;
+      bestLen = result.path.length;
+      selectedGoal = candidates[ci];
+    }
+  }
+
+  if (!bestPath) return null;
+
+  // Debug
+  if (creep.name.indexOf('claimer') !== -1 || creep.name.indexOf('pioneer') !== -1) {
+    console.log(
+      '[travel:path] ' + creep.name +
+      ' room=' + currentRoom +
+      ' enter=' + (enterDir || 'none') +
+      ' exit=' + exitDir +
+      ' proj=' + projected.x + ',' + projected.y +
+      ' goal=' + selectedGoal.x + ',' + selectedGoal.y +
+      ' len=' + bestLen
+    );
   }
 
   // Convert RoomPosition[] → lightweight [{x,y,roomName}]
   var path = [];
-  for (var j = 0; j < result.path.length; j++) {
+  for (var j = 0; j < bestPath.length; j++) {
     path.push({
-      x: result.path[j].x,
-      y: result.path[j].y,
-      roomName: result.path[j].roomName
+      x: bestPath[j].x,
+      y: bestPath[j].y,
+      roomName: bestPath[j].roomName
     });
   }
   return path;
@@ -445,6 +528,15 @@ module.exports = {
           ? t.route[t.routeIdx] : null;
         t.routeIdx = currentIndex + 1;
 
+        // Compute enterDir: direction from current room to previous room
+        if (currentIndex > 0) {
+          t._enterDir = Game.map.findExit(
+            creep.pos.roomName, t.route[currentIndex - 1]
+          );
+        } else {
+          t._enterDir = null;
+        }
+
         // Room changed → invalidate tile path
         if (prevRoom !== null && t.routeIdx > 0 &&
             currentIndex !== t.routeIdx - 1) {
@@ -518,7 +610,7 @@ module.exports = {
 
     // ── Compute path if needed ──
     if (!t.path) {
-      var computed = computeStepPath(creep, nextRoom);
+      var computed = computeStepPath(creep, nextRoom, t._enterDir);
       if (computed) {
         t.path = computed;
         t.pathIdx = 0;
