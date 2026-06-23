@@ -337,7 +337,7 @@ function buildMinerBody(energyCapacity) {
 function buildWorkerBody(energyCapacity, role, desiredWork) {
   const body = [];
 
-  if (role === 'rcl1Upgrader') {
+  if (role === 'upgrader') {
     return bodyPolicy.buildStaticUpgraderBody(
       energyCapacity,
       desiredWork
@@ -782,7 +782,7 @@ function run(room, state) {
   // guards) which would otherwise be starved and age out.
   // Floor of 300 ensures a minimum [W,C×2,M×2] body is possible.
   const upgraderBodyBuilder = function (energyCap, role, desiredWork) {
-    if (role === 'rcl1Upgrader') {
+    if (role === 'upgrader') {
       var cappedEnergy = Math.floor(room.energyCapacityAvailable * 0.5);
       if (cappedEnergy < 300) cappedEnergy = 300;
       if (room.energyAvailable < cappedEnergy) cappedEnergy = room.energyAvailable;

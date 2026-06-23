@@ -2,14 +2,14 @@ const POLICY_VERSION = 3;
 const RCL1_SPAWN_ORDER = [
   'rcl1Harvester',
   'rcl1Builder',
-  'rcl1Upgrader',
+  'upgrader',
   'guard'
 ];
 const LOCAL_ECONOMY_SPAWN_ORDER = [
   'rcl2Miner',
   'rcl2Hauler',
   'rcl1Builder',
-  'rcl1Upgrader'
+  'upgrader'
 ];
 
 const FALLBACK = {
@@ -26,7 +26,7 @@ const FALLBACK_PROFILES = {
       'rcl2Miner',
       'rcl2Hauler',
       'rcl1Builder',
-      'rcl1Upgrader'
+      'upgrader'
     ],
     suspendUpgrade: false
   },
@@ -36,7 +36,7 @@ const FALLBACK_PROFILES = {
       'rcl2Miner',
       'rcl2Hauler',
       'rcl1Builder',
-      'rcl1Upgrader'
+      'upgrader'
     ],
     suspendUpgrade: true
   },
@@ -46,7 +46,7 @@ const FALLBACK_PROFILES = {
       'rcl2Miner',
       'rcl2Hauler',
       'rcl1Builder',
-      'rcl1Upgrader'
+      'upgrader'
     ],
     suspendUpgrade: true
   },
@@ -55,7 +55,7 @@ const FALLBACK_PROFILES = {
       'rcl2Miner',
       'rcl2Hauler',
       'rcl1Builder',
-      'rcl1Upgrader'
+      'upgrader'
     ],
     suspendUpgrade: false
   },
@@ -65,7 +65,7 @@ const FALLBACK_PROFILES = {
       'rcl2Hauler',
       'guard',
       'rcl1Builder',
-      'rcl1Upgrader'
+      'upgrader'
     ],
     suspendUpgrade: true
   }

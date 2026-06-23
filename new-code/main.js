@@ -1,7 +1,7 @@
 const rcl1Bootstrap = require('manager.rcl1Bootstrap');
 const rcl2ContainerEconomy = require('manager.rcl2ContainerEconomy');
 const roleRcl1Harvester = require('role.rcl1Harvester');
-const roleRcl1Upgrader = require('role.rcl1Upgrader');
+const roleUpgrader = require('role.upgrader');
 const roleRcl1Builder = require('role.rcl1Builder');
 const roleRcl2Miner = require('role.rcl2Miner');
 const roleRcl2Hauler = require('role.rcl2Hauler');
@@ -30,13 +30,13 @@ const ROOM_PLANNER_ACTIVATION_VERSION = 1;
 
 const LEGACY_ROLES = {
   harvester: 'rcl1Harvester',
-  upgrader: 'rcl1Upgrader',
-  builder: 'rcl1Builder'
+  builder: 'rcl1Builder',
+  rcl1Upgrader: 'upgrader'
 };
 
 const ROLE_MODULES = {
   rcl1Harvester: roleRcl1Harvester,
-  rcl1Upgrader: roleRcl1Upgrader,
+  upgrader: roleUpgrader,
   rcl1Builder: roleRcl1Builder,
   rcl2Miner: roleRcl2Miner,
   rcl2Hauler: roleRcl2Hauler,

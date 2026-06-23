@@ -24,7 +24,7 @@ function getUpgraderState(creeps, spawn, room) {
     : 0;
 
   for (const creep of creeps) {
-    if (creep.memory.role !== 'rcl1Upgrader') continue;
+    if (creep.memory.role !== 'upgrader') continue;
 
     count++;
     const work = creep.getActiveBodyparts(WORK);
@@ -204,7 +204,7 @@ function run(room, options) {
   );
   const upgraderPolicy = population.getRole(
     populationPlan,
-    'rcl1Upgrader'
+    'upgrader'
   );
   const guardPolicy = population.getRole(populationPlan, 'guard');
   population.saveRoomState(room.name, populationPlan);
@@ -320,9 +320,9 @@ function run(room, options) {
   ) {
     trySpawn(
       spawn,
-      'rcl1Upgrader',
+      'upgrader',
       buildBody(
-        'rcl1Upgrader',
+        'upgrader',
         upgraderWorkTarget - upgraders.healthyWork
       ),
       sourceIds

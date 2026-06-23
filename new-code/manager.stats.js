@@ -132,7 +132,7 @@ module.exports = {
       for (const creep of creeps) {
         const role = creep.memory.role || 'unknown';
         roleCounts[role] = (roleCounts[role] || 0) + 1;
-        if (role === 'rcl1Upgrader') {
+        if (role === 'upgrader') {
           upgraderCount++;
           upgraderWork += creep.getActiveBodyparts(WORK);
         }
