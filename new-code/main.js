@@ -244,4 +244,20 @@ module.exports.loop = function () {
       });
     }
   }
+
+  // 7. Link transfer: entrance link → storage link
+  try {
+    var entranceLink = Game.getObjectById('6a365015c5a7673e2ea6a3d0');
+    var storageLink = Game.getObjectById('6a3a1b8cd95da3a3fde03bb5');
+    if (
+      entranceLink && storageLink &&
+      entranceLink.cooldown === 0 &&
+      entranceLink.store.getUsedCapacity(RESOURCE_ENERGY) >= 400 &&
+      storageLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      entranceLink.transferEnergy(storageLink);
+    }
+  } catch (err) {
+    errorReporter.capture(err, { module: 'link.transfer' });
+  }
 };

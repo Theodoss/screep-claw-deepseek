@@ -11,7 +11,21 @@ function closestTarget(creep, targets) {
   );
 }
 
+// Entrance link for W48N25 / W48N26 remote haulers.
+// These remote rooms drop close to this link — avoids long walk to storage.
+var ENTRANCE_LINK_ID = '6a365015c5a7673e2ea6a3d0';
+var ENTRANCE_LINK_ROOMS = { 'W48N25': true, 'W48N26': true };
+
 function findHomeDeliveryTarget(creep) {
+  // Priority 1: Entrance link for selected remote rooms (W48N25, W48N26).
+  if (ENTRANCE_LINK_ROOMS[creep.memory.remoteRoom]) {
+    var entranceLink = Game.getObjectById(ENTRANCE_LINK_ID);
+    if (entranceLink && entranceLink.store &&
+        entranceLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+      return entranceLink;
+    }
+  }
+
   const myStructures = creep.room.find(FIND_MY_STRUCTURES);
   const spawnTargets = [];
   const extTargets = [];
