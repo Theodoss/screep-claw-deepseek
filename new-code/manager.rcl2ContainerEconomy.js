@@ -610,9 +610,12 @@ function run(room, state) {
     repairBacklog: emergencyRepair || generalRepair
   });
   const controllerContainer = economy.getControllerContainer(room);
+  // If no controller container exists (e.g. RCL1-2 room without link/container
+  // layout), still target 1 upgrader — it will fall back to source containers,
+  // spawn/extensions, or direct harvesting.
   var requestedUpgradeWork = controllerContainer
     ? economyState.upgraderWorkTarget || 0
-    : 0;
+    : 5;
 
   // Colony state / expansion mission: limit upgrade to funnel energy elsewhere.
   // ALWAYS keep 1 minimal upgrader to prevent downgrade.
