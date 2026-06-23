@@ -815,7 +815,8 @@ function run(room, state) {
     towerCapacity += towers[ti].store.getCapacity(RESOURCE_ENERGY);
   }
   var towerDepleted = towers.length > 0 && towerEnergy < towerCapacity / 3;
-  var needGuard = hostiles.length > 3 && towerDepleted;
+  // Spawn guard when: (hostiles > 3 AND towers depleted) OR (any hostiles AND no towers at all)
+  var needGuard = (hostiles.length > 3 && towerDepleted) || (hostiles.length > 0 && towers.length === 0);
 
   if (needGuard && guards.length < guardPolicy.target) {
     const guardBody = buildGuardBody(room.energyCapacityAvailable);

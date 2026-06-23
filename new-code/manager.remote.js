@@ -1035,13 +1035,29 @@ function getSpawnRequests(homeRoomName) {
     var controllerMine = missionRoom && missionRoom.controller && missionRoom.controller.my;
 
     // Phase transition: claim → build
+    // Recovery auto-complete: when target room has its own creeps again,
+    // the pioneers have succeeded in jump-starting the local economy.
+    if (
+      mission.recovery &&
+      missionRoom &&
+      missionRoom.find(FIND_MY_CREEPS).length > 0
+    ) {
+      mission.phase = 'done';
+      mission.active = false;
+      delete mission.recovery;
+      console.log('[expansion] ' + target + ' recovery complete — room has own creeps');
+    }
+
     if (mission.phase === 'claim' && controllerMine) {
       mission.phase = 'build';
       console.log('[expansion] ' + target + ' claimed! Phase → build');
     }
     // Phase transition: build → done
+    // Skip when recovery mode: we are deliberately sending more pioneers/builder
+    // for a rebuild (e.g. after invader wiped the room).
     if (
       mission.phase === 'build' &&
+      !mission.recovery &&
       missionRoom &&
       missionRoom.find(FIND_MY_SPAWNS).length > 0
     ) {
