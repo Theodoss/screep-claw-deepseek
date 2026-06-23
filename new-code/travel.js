@@ -1,43 +1,47 @@
 // Room-level cross-room travel using Game.map.findRoute.
 //
-// PRIMARY PATH: Game.map.findRoute() → PathFinder.search() →
-//   Room.serializePath() → creep.moveByPath().
-// FALLBACK:    creep.moveTo(roomCenter) for border-push / path-fail /
-//   past-all-route-rooms.
+// PRIMARY:   Game.map.findRoute() → PathFinder.search() →
+//            follow path step-by-step with creep.move(getDirectionTo(next)).
+// FALLBACK:  Exit-directed creep.moveTo() for path-fail / no-path.
 //
 // Path is recomputed only on invalidation (room change, stuck, flags
-// change, target change, moveByPath error).  PathFinder is restricted
-// to the current room + next route room so it CANNOT optimise
-// globally (no more "swamp too expensive → go back" oscillation).
+// change, target change).  PathFinder is restricted to current room +
+// next route room so it CANNOT optimise globally (no more "swamp too
+// expensive → go back" oscillation).
 //
 // Optional: nav-0, nav-1, ... nav-N flags are interpolated into
 // the route as waypoint rooms.
 //
 // State stored in creep.memory._t:
-//   _t.route         — cached room array from findRoute
+//   _t.fromRoom      — room we built the route from
+//   _t.route         — room route INCLUDING fromRoom at index 0
 //   _t.routeIdx      — current index in route
-//   _t.path          — serialized path string (Room.serializePath)
+//   _t.path          — PathFinder path as [{x,y,roomName}]
+//   _t.pathIdx       — current step in path
 //   _t.pathAge       — ticks since path was computed
 //   _t.stuck         — consecutive ticks at same tile
 //   _t.lastPos       — {x,y,roomName} of last tick's position
-//   _t.lastResult    — last moveByPath / moveTo result code
+//   _t.lastResult    — last movement result code
 //   _t.lastRoom      — previous tick's room (anti-oscillation)
 //   _t.prevPrevRoom  — two ticks ago room
 //   _t.lockUntil     — anti-oscillation lock expiry tick
 //
 // Usage:
 //   const travel = require('travel');
-//   if (!travel.run(creep, 'W47N22')) {
-//     // Arrived
-//   }
+//   if (!travel.run(creep, 'W47N22')) { /* arrived */ }
 
 var PATH_STUCK_LIMIT = 3;
 
 // Per-room swamp cost overrides for known swamp-heavy rooms.
-// Lower values make PathFinder less likely to give up on the room.
-var SWAMP_COST_OVERRIDE = {
-  'W48N22': 3
-};
+var SWAMP_COST_OVERRIDE = { 'W48N22': 3 };
+
+// ── Structures that are ALWAYS impassable ──
+var BLOCKED_STRUCTURES = [
+  STRUCTURE_SPAWN, STRUCTURE_EXTENSION, STRUCTURE_TOWER,
+  STRUCTURE_STORAGE, STRUCTURE_TERMINAL, STRUCTURE_LAB,
+  STRUCTURE_FACTORY, STRUCTURE_NUKER, STRUCTURE_OBSERVER,
+  STRUCTURE_POWER_SPAWN, STRUCTURE_KEEPER_LAIR
+];
 
 // ── Nav flag fingerprint (detects flag changes) ──
 function getNavFingerprint() {
@@ -101,9 +105,7 @@ function buildCostMatrix(roomName, allowedRooms) {
   if (allowedRooms && !allowedRooms[roomName]) {
     var blocked = new PathFinder.CostMatrix();
     for (var y = 0; y < 50; y++) {
-      for (var x = 0; x < 50; x++) {
-        blocked.set(x, y, 0xFF);
-      }
+      for (var x = 0; x < 50; x++) { blocked.set(x, y, 0xFF); }
     }
     return blocked;
   }
@@ -130,28 +132,38 @@ function buildCostMatrix(roomName, allowedRooms) {
     var structures = room.find(FIND_STRUCTURES);
     for (var i = 0; i < structures.length; i++) {
       var s = structures[i];
+
+      // Roads get cost 1 (faster than plain)
       if (s.structureType === STRUCTURE_ROAD) {
         if (costs.get(s.pos.x, s.pos.y) < 0xFF) {
           costs.set(s.pos.x, s.pos.y, 1);
         }
-      } else if (
-        !s.my &&
-        (s.structureType === STRUCTURE_WALL ||
-         s.structureType === STRUCTURE_RAMPART ||
-         s.structureType === STRUCTURE_SPAWN ||
-         s.structureType === STRUCTURE_EXTENSION ||
-         s.structureType === STRUCTURE_TOWER)
-      ) {
+        continue;
+      }
+
+      // Containers are walkable (no change)
+      if (s.structureType === STRUCTURE_CONTAINER) continue;
+
+      // Own or public ramparts are walkable
+      if (s.structureType === STRUCTURE_RAMPART) {
+        if (s.my || s.isPublic) continue;
         costs.set(s.pos.x, s.pos.y, 0xFF);
+        continue;
+      }
+
+      // Block all other impassable structures (own or hostile)
+      for (var bi = 0; bi < BLOCKED_STRUCTURES.length; bi++) {
+        if (s.structureType === BLOCKED_STRUCTURES[bi]) {
+          costs.set(s.pos.x, s.pos.y, 0xFF);
+          break;
+        }
       }
     }
 
-    // Block hostile construction sites
+    // Block construction sites (can't walk through)
     var sites = room.find(FIND_CONSTRUCTION_SITES);
     for (var j = 0; j < sites.length; j++) {
-      if (!sites[j].my) {
-        costs.set(sites[j].pos.x, sites[j].pos.y, 0xFF);
-      }
+      costs.set(sites[j].pos.x, sites[j].pos.y, 0xFF);
     }
   }
 
@@ -160,9 +172,7 @@ function buildCostMatrix(roomName, allowedRooms) {
 
 // ── Compute PathFinder path to the NEXT room only ──
 // Restricts PathFinder to current room + nextRoom.
-// This guarantees the creep must go through this specific room
-// (PathFinder cannot "optimise" by routing through other rooms).
-// Returns a serialized path string, or null on failure.
+// Returns [{x,y,roomName}] or null on failure.
 function computeStepPath(creep, nextRoom) {
   var currentRoom = creep.pos.roomName;
   var allowedRooms = {};
@@ -189,67 +199,61 @@ function computeStepPath(creep, nextRoom) {
     return null;
   }
 
-  // Serialize: any visible room works
-  var room = Game.rooms[currentRoom];
-  if (room && room.serializePath) {
-    return room.serializePath(result.path);
+  // Convert RoomPosition[] to lightweight [{x,y,roomName}]
+  var path = [];
+  for (var i = 0; i < result.path.length; i++) {
+    path.push({
+      x: result.path[i].x,
+      y: result.path[i].y,
+      roomName: result.path[i].roomName
+    });
   }
-
-  return null;
+  return path;
 }
 
-// ── Fallback: exit-directed moveTo (same room only, no cross-room pathfinder) ──
-// Uses Game.map.findExit to find the exit direction, then picks a walkable
-// edge tile in the current room and moves there.  This avoids the cross-room
-// moveTo that triggers global pathfinder oscillation.
-function moveToFallback(creep, nextRoom) {
-  var exitDir = Game.map.findExit(creep.pos.roomName, nextRoom);
-  if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) {
-    // Last resort: direct cross-room moveTo
-    creep.moveTo(new RoomPosition(25, 25, nextRoom), {
-      reusePath: 50, swampCost: 5,
-      visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
-    });
-    return;
-  }
+// ── Follow path step-by-step with creep.move(getDirectionTo) ──
+// Returns true if the creep still has path steps to follow.
+function followPath(creep, t) {
+  var path = t.path;
+  if (!path) return false;
 
-  var terrain = Game.map.getRoomTerrain(creep.pos.roomName);
-  var targetX, targetY;
+  var idx = t.pathIdx || 0;
 
-  if (exitDir === FIND_EXIT_TOP)       { targetY = 1;  targetX = 25; }
-  else if (exitDir === FIND_EXIT_BOTTOM) { targetY = 48; targetX = 25; }
-  else if (exitDir === FIND_EXIT_LEFT)   { targetX = 1;  targetY = 25; }
-  else if (exitDir === FIND_EXIT_RIGHT)  { targetX = 48; targetY = 25; }
-  else { return; }
-
-  // Try to find a walkable tile near the exit center
-  var found = false;
-  for (var offset = 0; offset < 24; offset++) {
-    var candidates = [];
-    if (exitDir === FIND_EXIT_TOP || exitDir === FIND_EXIT_BOTTOM) {
-      candidates.push({ x: targetX + offset, y: targetY });
-      candidates.push({ x: targetX - offset, y: targetY });
+  // Advance past reached positions
+  while (idx < path.length) {
+    var step = path[idx];
+    if (step.roomName === creep.pos.roomName &&
+        step.x === creep.pos.x && step.y === creep.pos.y) {
+      idx++;
     } else {
-      candidates.push({ x: targetX, y: targetY + offset });
-      candidates.push({ x: targetX, y: targetY - offset });
+      break;
     }
-    for (var ci = 0; ci < candidates.length; ci++) {
-      var cx = candidates[ci].x, cy = candidates[ci].y;
-      if (cx >= 1 && cx <= 48 && cy >= 1 && cy <= 48 &&
-          terrain.get(cx, cy) !== TERRAIN_MASK_WALL) {
-        targetX = cx; targetY = cy; found = true; break;
-      }
-    }
-    if (found) break;
   }
 
-  if (found) {
-    creep.moveTo(
-      new RoomPosition(targetX, targetY, creep.pos.roomName),
-      { reusePath: 20, swampCost: 5,
-        visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' } }
-    );
+  if (idx >= path.length) {
+    delete t.path;
+    delete t.pathIdx;
+    return false;
   }
+
+  t.pathIdx = idx;
+  var nextStep = path[idx];
+
+  // getDirectionTo handles cross-room: returns exit direction
+  var dir = creep.pos.getDirectionTo(
+    nextStep.x, nextStep.y, nextStep.roomName
+  );
+
+  if (dir && dir !== ERR_NO_PATH && dir !== ERR_INVALID_ARGS) {
+    var result = creep.move(dir);
+    t.lastResult = 'move:' + result;
+    return true;
+  }
+
+  // Can't determine direction → invalidate
+  delete t.path;
+  delete t.pathIdx;
+  return false;
 }
 
 // ── Invalidation checks ──
@@ -264,21 +268,74 @@ function shouldInvalidatePath(creep, t, targetRoom) {
   // 3. Stuck too long
   if (t.stuck > PATH_STUCK_LIMIT) return true;
 
-  // 4. Off route
-  var onRoute = false;
-  if (t.route && t.routeIdx !== undefined) {
+  // 4. Off route: creep is not at a valid point in the route
+  if (t.route && t.routeIdx !== undefined && t.fromRoom) {
+    var onRoute = false;
+    // Starting room (haven't left yet, routeIdx may be 0)
+    if (t.routeIdx >= 0 && creep.pos.roomName === t.route[0]) {
+      onRoute = true;
+    }
+    // Remaining route rooms
     for (var ri = t.routeIdx; ri < t.route.length; ri++) {
       if (creep.pos.roomName === t.route[ri]) {
         onRoute = true;
         break;
       }
     }
-  }
-  if (!onRoute && t.route && t.routeIdx !== undefined && t.routeIdx < t.route.length) {
-    return true;
+    if (!onRoute) return true;
   }
 
   return false;
+}
+
+// ── Fallback: exit-directed moveTo ──
+// Targets the actual exit tiles (x/y=0 or 49) using maxRooms:1
+// to prevent cross-room pathfinder oscillation.
+function moveToFallback(creep, nextRoom) {
+  var exitDir = Game.map.findExit(creep.pos.roomName, nextRoom);
+  if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) {
+    creep.moveTo(new RoomPosition(25, 25, nextRoom), {
+      reusePath: 50, swampCost: 5,
+      visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
+    });
+    return;
+  }
+
+  var terrain = Game.map.getRoomTerrain(creep.pos.roomName);
+  var targetX, targetY;
+  var isHorizontal;
+
+  if (exitDir === FIND_EXIT_TOP)       { targetY = 0;  targetX = 25; isHorizontal = true;  }
+  else if (exitDir === FIND_EXIT_BOTTOM) { targetY = 49; targetX = 25; isHorizontal = true;  }
+  else if (exitDir === FIND_EXIT_LEFT)   { targetX = 0;  targetY = 25; isHorizontal = false; }
+  else if (exitDir === FIND_EXIT_RIGHT)  { targetX = 49; targetY = 25; isHorizontal = false; }
+  else { return; }
+
+  // Find nearest walkable exit tile on the exit boundary
+  for (var offset = 0; offset < 25; offset++) {
+    var cx, cy;
+    if (isHorizontal) {
+      cx = targetX + offset;
+      if (cx >= 0 && cx <= 49 && terrain.get(cx, targetY) !== TERRAIN_MASK_WALL)
+        { targetX = cx; break; }
+      cx = targetX - offset;
+      if (cx >= 0 && cx <= 49 && terrain.get(cx, targetY) !== TERRAIN_MASK_WALL)
+        { targetX = cx; break; }
+    } else {
+      cy = targetY + offset;
+      if (cy >= 0 && cy <= 49 && terrain.get(targetX, cy) !== TERRAIN_MASK_WALL)
+        { targetY = cy; break; }
+      cy = targetY - offset;
+      if (cy >= 0 && cy <= 49 && terrain.get(targetX, cy) !== TERRAIN_MASK_WALL)
+        { targetY = cy; break; }
+    }
+  }
+
+  creep.moveTo(targetX, targetY, {
+    reusePath: 20, swampCost: 5,
+    maxRooms: 1, maxOps: 5000,
+    visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
+  });
 }
 
 module.exports = {
@@ -296,8 +353,10 @@ module.exports = {
       t.lastPos = null;
       t.lastResult = null;
       delete t.path;
+      delete t.pathIdx;
       delete t.route;
       delete t.routeIdx;
+      delete t.fromRoom;
       delete t.lockUntil;
     }
 
@@ -313,12 +372,31 @@ module.exports = {
       }
     }
 
-    // ── Border defense: push away from edge ──
+    // ── Determine next route room for smart border defense ──
+    var nextRoom = null;
+    if (t.route && t.routeIdx !== undefined && t.routeIdx < t.route.length) {
+      nextRoom = t.route[t.routeIdx];
+    }
+
+    // ── Border defense: push away from edge unless at correct exit ──
     if (creep.pos.x === 0 || creep.pos.x === 49 ||
         creep.pos.y === 0 || creep.pos.y === 49) {
+      // Check if this edge leads to the next route room
+      if (nextRoom) {
+        var exitDir = Game.map.findExit(creep.pos.roomName, nextRoom);
+        var atCorrectExit = false;
+        if (exitDir === FIND_EXIT_TOP    && creep.pos.y === 0)  atCorrectExit = true;
+        if (exitDir === FIND_EXIT_BOTTOM && creep.pos.y === 49) atCorrectExit = true;
+        if (exitDir === FIND_EXIT_LEFT   && creep.pos.x === 0)  atCorrectExit = true;
+        if (exitDir === FIND_EXIT_RIGHT  && creep.pos.x === 49) atCorrectExit = true;
+        if (atCorrectExit) {
+          t.lastResult = 'border:exit';
+          return true; // at correct exit, let natural crossing happen
+        }
+      }
+      // Wrong edge — push back to center
       creep.moveTo(new RoomPosition(25, 25, creep.pos.roomName), {
-        reusePath: 5,
-        swampCost: 5,
+        reusePath: 5, swampCost: 5,
         visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
       });
       t.lastResult = 'border';
@@ -335,26 +413,29 @@ module.exports = {
     }
     t.lastRoom = creep.pos.roomName;
 
-    // ── Build / refresh room route ──
+    // ── Build / refresh room route (includes fromRoom at index 0) ──
     if (!t.route || t.routeIdx === undefined) {
-      t.route = buildRoute(creep.pos.roomName, targetRoom);
+      var raw = buildRoute(creep.pos.roomName, targetRoom);
+      t.route = raw ? [creep.pos.roomName].concat(raw) : null;
       t.routeIdx = 0;
-      if (!t.route || t.route.length === 0) {
-        // No route — fallback moveTo
-        var fbr = creep.moveTo(
-          new RoomPosition(25, 25, targetRoom),
-          { reusePath: 20, swampCost: 5,
-            visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' } }
-        );
-        t.lastResult = 'moveTo:noroute:' + fbr;
+      t.fromRoom = creep.pos.roomName;
+      if (!t.route || t.route.length <= 1) {
+        // No route or only fromRoom — fallback moveTo
+        creep.moveTo(new RoomPosition(25, 25, targetRoom), {
+          reusePath: 20, swampCost: 5,
+          visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
+        });
+        t.lastResult = 'moveTo:noroute';
         return true;
       }
     }
 
     // ── Advance route index ──
+    // route[0] is fromRoom; advance past rooms we've entered.
+    // For the creep in fromRoom: routeIdx advances from 0 to 1,
+    //   nextRoom = route[1] = first adjacent room.
     var prevRoom = (t.routeIdx < t.route.length)
-      ? t.route[t.routeIdx]
-      : null;
+      ? t.route[t.routeIdx] : null;
     while (
       t.routeIdx < t.route.length &&
       creep.pos.roomName === t.route[t.routeIdx]
@@ -362,26 +443,27 @@ module.exports = {
       t.routeIdx++;
     }
 
-    // Room changed → invalidate tile path, recalc next tick
+    // Room changed → invalidate tile path
     if (prevRoom && creep.pos.roomName === prevRoom) {
       delete t.path;
+      delete t.pathIdx;
       t.pathAge = 0;
     }
 
+    // Update nextRoom after routeIdx advancement
+    nextRoom = (t.routeIdx < t.route.length) ? t.route[t.routeIdx] : null;
+
     // ── Past all route rooms → direct moveTo ──
-    if (t.routeIdx >= t.route.length) {
-      var mr = creep.moveTo(
-        new RoomPosition(25, 25, targetRoom),
-        { reusePath: 20, swampCost: 5,
-          visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' } }
-      );
-      t.lastResult = 'moveTo:final:' + mr;
+    if (!nextRoom || t.routeIdx >= t.route.length) {
+      creep.moveTo(new RoomPosition(25, 25, targetRoom), {
+        reusePath: 20, swampCost: 5,
+        visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
+      });
+      t.lastResult = 'moveTo:final';
       return true;
     }
 
-    var nextRoom = t.route[t.routeIdx];
-
-    // ── Oscillation lock: force exit-directed movement ──
+    // ── Oscillation lock: force fallback movement ──
     if (t.lockUntil && Game.time < t.lockUntil) {
       moveToFallback(creep, nextRoom);
       t.lastResult = 'moveTo:lock';
@@ -406,34 +488,28 @@ module.exports = {
     // ── Invalidate stale path ──
     if (shouldInvalidatePath(creep, t, targetRoom)) {
       delete t.path;
+      delete t.pathIdx;
       t.pathAge = 0;
     }
 
     // ── Compute path if needed ──
     if (!t.path) {
-      var serialized = computeStepPath(creep, nextRoom);
-      if (serialized) {
-        t.path = serialized;
+      var computed = computeStepPath(creep, nextRoom);
+      if (computed) {
+        t.path = computed;
+        t.pathIdx = 0;
         t.pathAge = 0;
         t._navFingerprint = getNavFingerprint();
       }
     }
 
-    // ── Follow serialized path ──
+    // ── Follow path step-by-step ──
     if (t.path) {
-      var result = creep.moveByPath(t.path);
-      t.lastResult = 'moveByPath:' + result;
       t.pathAge = (t.pathAge || 0) + 1;
-
-      // Path invalidated by errors
-      if (result === ERR_NOT_FOUND || result === ERR_INVALID_ARGS) {
-        delete t.path;
-      }
-
-      return true;
+      if (followPath(creep, t)) return true;
     }
 
-    // ── Fallback: exit-directed moveTo (same room, no cross-room pathfinder) ──
+    // ── Fallback: exit-directed moveTo ──
     moveToFallback(creep, nextRoom);
     t.lastResult = 'moveTo:fallback';
     return true;
