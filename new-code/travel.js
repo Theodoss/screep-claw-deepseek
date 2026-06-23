@@ -1,8 +1,10 @@
 // Room-level cross-room travel using Game.map.findRoute.
 //
-// Uses moveTo(roomCenter) for single-room-boundary navigation —
-// never does multi-room pathfinding, eliminating border oscillation.
-// Handles swamp natively with swampCost option.
+// Navigation uses exit-directed intra-room moveTo: finds the exit
+// edge to the next route room and moves to a walkable tile on that
+// edge within the current room ONLY.  This prevents the built-in
+// cross-room pathfinder from optimizing globally (e.g. avoiding
+// an expensive swamp room by going back and taking another exit).
 //
 // Optional: nav-0, nav-1, ... nav-N flags are interpolated into
 // the route as waypoint rooms.
@@ -62,6 +64,58 @@ function buildRoute(fromRoom, toRoom) {
   return fullRoute;
 }
 
+// Find a walkable tile on the exit edge of currentRoom toward nextRoom.
+// Returns a RoomPosition within currentRoom, or null if no walkable edge.
+function findExitTile(currentRoom, nextRoom) {
+  var exitDir = Game.map.findExit(currentRoom, nextRoom);
+  if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) return null;
+
+  var terrain = Game.map.getRoomTerrain(currentRoom);
+
+  if (exitDir === FIND_EXIT_TOP) {
+    for (var x = 25; x >= 1; x--) {
+      if (terrain.get(x, 1) !== TERRAIN_MASK_WALL) return new RoomPosition(x, 1, currentRoom);
+    }
+    for (var x = 26; x <= 48; x++) {
+      if (terrain.get(x, 1) !== TERRAIN_MASK_WALL) return new RoomPosition(x, 1, currentRoom);
+    }
+  } else if (exitDir === FIND_EXIT_BOTTOM) {
+    for (var x = 25; x >= 1; x--) {
+      if (terrain.get(x, 48) !== TERRAIN_MASK_WALL) return new RoomPosition(x, 48, currentRoom);
+    }
+    for (var x = 26; x <= 48; x++) {
+      if (terrain.get(x, 48) !== TERRAIN_MASK_WALL) return new RoomPosition(x, 48, currentRoom);
+    }
+  } else if (exitDir === FIND_EXIT_LEFT) {
+    for (var y = 25; y >= 1; y--) {
+      if (terrain.get(1, y) !== TERRAIN_MASK_WALL) return new RoomPosition(1, y, currentRoom);
+    }
+    for (var y = 26; y <= 48; y++) {
+      if (terrain.get(1, y) !== TERRAIN_MASK_WALL) return new RoomPosition(1, y, currentRoom);
+    }
+  } else if (exitDir === FIND_EXIT_RIGHT) {
+    for (var y = 25; y >= 1; y--) {
+      if (terrain.get(48, y) !== TERRAIN_MASK_WALL) return new RoomPosition(48, y, currentRoom);
+    }
+    for (var y = 26; y <= 48; y++) {
+      if (terrain.get(48, y) !== TERRAIN_MASK_WALL) return new RoomPosition(48, y, currentRoom);
+    }
+  }
+
+  // All edge tiles are walls — fall back to room center
+  return new RoomPosition(25, 25, currentRoom);
+}
+
+// Move toward a specific exit edge within the current room.
+// Uses intra-room moveTo only (target is in same room) so the
+// pathfinder cannot optimize across multiple rooms.
+function moveToExit(creep, currentRoom, nextRoom, opts) {
+  var exitPos = findExitTile(currentRoom, nextRoom);
+  if (exitPos) {
+    creep.moveTo(exitPos, opts);
+  }
+}
+
 module.exports = {
   run: function (creep, targetRoom) {
     var mem = creep.memory;
@@ -100,12 +154,12 @@ module.exports = {
     }
     t.lastRoom = creep.pos.roomName;
 
-    // ── Oscillation lock: head to next room center, no recalculation ──
+    // ── Oscillation lock: force exit toward next route room ──
     if (t.lockUntil && Game.time < t.lockUntil) {
       var lockTarget = (t.route && t.routeIdx < t.route.length)
         ? t.route[t.routeIdx]
         : targetRoom;
-      creep.moveTo(new RoomPosition(25, 25, lockTarget), {
+      moveToExit(creep, creep.pos.roomName, lockTarget, {
         reusePath: 50,
         swampCost: 5,
         visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
@@ -118,6 +172,7 @@ module.exports = {
       t.route = buildRoute(creep.pos.roomName, targetRoom);
       t.routeIdx = 0;
       if (!t.route || t.route.length === 0) {
+        // No route found — last resort: direct cross-room moveTo
         creep.moveTo(new RoomPosition(25, 25, targetRoom), {
           reusePath: 20,
           swampCost: 5,
@@ -135,7 +190,7 @@ module.exports = {
       t.routeIdx++;
     }
 
-    // ── Past all rooms → head to target center ──
+    // ── Past all rooms → head to target center (cross-room ok, we're close) ──
     if (t.routeIdx >= t.route.length) {
       creep.moveTo(new RoomPosition(25, 25, targetRoom), {
         reusePath: 20,
@@ -145,9 +200,12 @@ module.exports = {
       return true;
     }
 
-    // ── Move toward next room center (single boundary, swamp-aware) ──
+    // ── Exit-directed navigation: move to exit edge in current room ──
+    // target is an edge tile WITHIN the current room, so the pathfinder
+    // cannot "optimise" by going back through other rooms — it must
+    // walk through the current room's terrain (swamp or not).
     var nextRoom = t.route[t.routeIdx];
-    creep.moveTo(new RoomPosition(25, 25, nextRoom), {
+    moveToExit(creep, creep.pos.roomName, nextRoom, {
       reusePath: 50,
       swampCost: 5,
       visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
