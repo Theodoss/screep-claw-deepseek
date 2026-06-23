@@ -615,7 +615,7 @@ function run(room, state) {
     : 0;
 
   // Colony state / expansion mission: limit upgrade to funnel energy elsewhere.
-  // Colonize/save: keep 1 minimal upgrader to prevent downgrade.
+  // ALWAYS keep 1 minimal upgrader to prevent downgrade.
   // Exception: controller emergency (downgrade imminent) → keep normal upgrade.
   if (
     colonyStates.isUpgradeSuspended(room.name) ||
@@ -625,13 +625,9 @@ function run(room, state) {
      room.name === Memory.expansionMission.home)
   ) {
     if (!economyState.controllerEmergency) {
-      var colCap = colonyStates.getUpgraderWorkCap(room.name);
-      if (colCap !== null && colCap > 0) {
-        // Minimal upgrader to prevent downgrade
-        requestedUpgradeWork = colCap;
-      } else {
-        requestedUpgradeWork = 0;
-      }
+      // Floor at 1: at least one minimal upgrader to prevent downgrade
+      requestedUpgradeWork = Math.min(requestedUpgradeWork, 1);
+      if (requestedUpgradeWork < 1) requestedUpgradeWork = 1;
     }
   }
 
