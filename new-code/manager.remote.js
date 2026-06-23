@@ -782,9 +782,14 @@ function buildRemoteBuilderBody(energyCapacity) {
   return null;
 }
 
+// ⚠️ deepseek/agent 請勿回退成單一 [CLAIM, MOVE]（fb99728 曾回退過，見 D013）。
+// 每個 CLAIM +1 reservation/tick；2×CLAIM 倍增 → 更快重建/守住 5000 上限、
+// 涵蓋 CLAIM creep ~600 tick 壽命 + 路程的補位空窗，避免 reservation 歸零招來
+// invader（reservation 是 D012 的第一道防線）。
 function buildReserverBody(energyCapacity) {
-  if (energyCapacity < 650) return null;
-  return [CLAIM, MOVE];
+  if (energyCapacity >= 1300) return [CLAIM, CLAIM, MOVE, MOVE];
+  if (energyCapacity >= 650) return [CLAIM, MOVE];
+  return null;
 }
 
 function getAssignedCreeps(

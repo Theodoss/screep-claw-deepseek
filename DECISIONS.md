@@ -361,3 +361,16 @@ Game.gcl.level;   // 必須 >= 已擁有房數+1，否則只 hold claimer
 
 - **驗證**: `role.remoteGuard.js / manager.remoteDefense.js / manager.remote.js` `node --check` 通過。
 - **教訓**: ① 別急著下根因——玩家的 live 數據推翻了我兩個假設；先看狀態再修。② 「撤退式防禦」的狀態清除若**依賴視野**會死鎖（撤光＝沒人解警報），要有 timeout 後門。③ 出口 tile(0/49) 會被遊戲自動推回隔壁房，「停在房內」邏輯必須先離開邊界 ≥3 格。④ 暫停/恢復這種「賭時間」的權宜，有了主動單位（guard）後應改成「**確認制 + 有保護才放行**」。
+
+---
+
+## D013 — reserver body 被回退，重新套用（協作衝突）
+
+- **時間**: 2026-06-22
+- **狀況**: 玩家回報 reserver 仍是 1/1。查證：D010 已把 `buildReserverBody` 改成 `[CLAIM×2, MOVE×2]`（9532746），但 **agent 的 `fb99728` commit 又把它改回單一 `[CLAIM, MOVE]`**。因為後續 D012 沒再碰這一行，最近一次 rebase **git 自動合併讓 agent 的回退版悄悄勝出**（無衝突提示），造成「DECISIONS 寫 2/2、code 卻是 1/1」的不一致。
+- **決議**: 重新套用 `[CLAIM×2, MOVE×2]`（cap≥1300）並在函式上方加 **`⚠️ 請勿回退`** 註解 + 理由（reservation 是第一道 invader 防線，2 CLAIM 才能守住不歸零）。
+- **給 deepseek/agent 的協作規則**:
+  1. 改任何 body/policy 前先讀 `DECISIONS.md`；若要回退既有決策，**必須在 DECISIONS 補一條說明原因**，不要無聲改回。
+  2. 無聲回退會被 git 自動合併吃掉、難以察覺；雙方都應把「為什麼這樣設」寫進 DECISIONS，避免 ping-pong。
+- **教訓**: 多人/多 agent 改同一 repo，**靜默的相反修改 + git 自動合併 = 看不見的回退**。防線是：關鍵決策寫進共享文檔、爭議處留 in-code 註解標記、review 時 diff 對照文檔與 code 是否一致。
+- **狀態**: 已重新套用 + 語法驗證。**若 agent 有意要縮回 1 CLAIM，請先在此說明理由再改。**
