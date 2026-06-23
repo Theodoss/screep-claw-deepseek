@@ -784,8 +784,30 @@ function buildRemoteHaulerBody(energyCapacity) {
 }
 
 function buildRemoteBuilderBody(energyCapacity) {
-  if (energyCapacity >= 400) {
-    return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
+  // More WORK = faster road repair.  Roads crumbling kills remote economy.
+  if (energyCapacity >= 1200) {
+    // 8×WORK + 4×CARRY + 4×MOVE = 800 cost, 40 work/tick
+    return [
+      WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+      CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 800) {
+    // 6×WORK + 3×CARRY + 3×MOVE = 600 cost, 30 work/tick
+    return [
+      WORK, WORK, WORK, WORK, WORK, WORK,
+      CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 500) {
+    // 4×WORK + 2×CARRY + 2×MOVE = 400 cost, 20 work/tick
+    return [
+      WORK, WORK, WORK, WORK,
+      CARRY, CARRY,
+      MOVE, MOVE
+    ];
   }
   if (energyCapacity >= 200) {
     return [WORK, CARRY, MOVE];
