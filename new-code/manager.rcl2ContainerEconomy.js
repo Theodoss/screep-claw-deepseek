@@ -3,7 +3,6 @@ const bodyPolicy = require('body.policy');
 const economy = require('manager.economy');
 const population = require('manager.population');
 const support = require('role.support');
-const spawnUtil = require('util.spawns');
 
 const DISCOVERY_INTERVAL = 50;
 const ENERGY_STARVATION_TICKS = 50;
@@ -682,8 +681,8 @@ function run(room, state) {
 
   if (spawns.length === 0) return;
 
-  const spawn = spawnUtil.getAvailableSpawn(room);
-  if (!spawn) return;
+  const spawn = spawns[0];
+  if (spawn.spawning) return;
 
   if (
     creeps.length === 0 ||

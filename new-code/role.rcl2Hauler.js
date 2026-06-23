@@ -229,21 +229,40 @@ function findEnergyTarget(creep) {
     return { target: spawnTarget, reason: STRUCTURE_SPAWN };
   }
 
-  // 3. Extension (not full)
+  // 3. Controller container (low-energy boost): when the upgrade container
+  // is below 200 energy and upgraders need it, fill it before extensions.
+  // This prevents upgraders from idling while haulers top off extensions.
+  if (!state.recovery && (state.upgraderWorkTarget || 0) > 0) {
+    var controllerContainer = economy.getControllerContainer(creep.room);
+    if (
+      controllerContainer &&
+      controllerContainer.store.getUsedCapacity(RESOURCE_ENERGY) < 200
+    ) {
+      var controllerRequest = logistics.getControllerDeliveryRequest(
+        creep,
+        controllerContainer,
+        state,
+        false
+      );
+      if (controllerRequest) return controllerRequest;
+    }
+  }
+
+  // 4. Extension (not full)
   const extTarget = findExtensionTarget(creep);
   if (extTarget) {
     logistics.clearDeliveryAssignment(creep);
     return { target: extTarget, reason: STRUCTURE_EXTENSION };
   }
 
-  // 4. Tower (needs energy)
+  // 5. Tower (needs energy)
   const towerTarget = findTower(creep);
   if (towerTarget) {
     logistics.clearDeliveryAssignment(creep);
     return { target: towerTarget, reason: STRUCTURE_TOWER };
   }
 
-  // 5. Upgrade container (normal, non-emergency)
+  // 6. Upgrade container (normal, non-emergency)
   if (!state.recovery && (state.upgraderWorkTarget || 0) > 0) {
     const controllerContainer = economy.getControllerContainer(creep.room);
     const controllerRequest = logistics.getControllerDeliveryRequest(
@@ -255,7 +274,7 @@ function findEnergyTarget(creep) {
     if (controllerRequest) return controllerRequest;
   }
 
-  // 6. Storage (last resort)
+  // 7. Storage (last resort)
   logistics.clearDeliveryAssignment(creep);
   const storage = findStorage(creep);
   return storage

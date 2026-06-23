@@ -25,7 +25,6 @@ const errorReporter = require('core.errorReporter');
 const rcl1SourceSlots = require('manager.rcl1SourceSlots');
 const towerManager = require('manager.tower');
 const roomPlanner = require('planner.roomPlanner');
-const spawnUtil = require('util.spawns');
 const ROOM_PLANNER_ENABLED = false;
 const ROOM_PLANNER_ACTIVATION_VERSION = 1;
 
@@ -120,8 +119,8 @@ module.exports.loop = function () {
     if (defenseRequests.length > 0) {
       const homeRoom = Game.rooms['W49N25'];
       if (homeRoom) {
-        const spawn = spawnUtil.getAvailableSpawn(homeRoom);
-        if (spawn) {
+        const spawn = homeRoom.find(FIND_MY_SPAWNS)[0];
+        if (spawn && !spawn.spawning) {
           const req = defenseRequests[0];
           if (homeRoom.energyAvailable >= req.bodyCost) {
             const result = spawn.spawnCreep(req.body, req.name, {
