@@ -1,58 +1,75 @@
 const remote = require('manager.remote');
 
+var ROAD_REPAIR_START = 0.4;   // repair when hits < 40%
+var ROAD_REPAIR_STOP  = 0.9;   // stop when hits > 90%
+
+// Get highest-priority work in the remote room.
+// Priority: road construction > container construction > link construction
+//            > other construction sites > road repair.
+// Container repair is REMOVED — now handled by remoteMiner only.
 function getRemoteWork(creep, remoteConfig) {
   if (!remoteConfig || !Array.isArray(remoteConfig.sources)) return null;
 
-  // 1. Container construction sites
-  for (let index = 0; index < remoteConfig.sources.length; index++) {
-    const sourceConfig = remoteConfig.sources[index];
-    if (!sourceConfig || sourceConfig.enabled !== true) continue;
-
-    const site = remote.findContainerSiteAt(
-      sourceConfig.roomName,
-      sourceConfig.containerX,
-      sourceConfig.containerY
-    );
-    if (site) {
-      return {
-        target: site,
-        type: 'build'
-      };
-    }
-  }
-
-  // 2. Container repairs (before roads — prevent decay→destruction cycle)
-  for (let index = 0; index < remoteConfig.sources.length; index++) {
-    const sourceConfig = remoteConfig.sources[index];
-    if (!sourceConfig || sourceConfig.enabled !== true) continue;
-
-    const container = remote.findContainerAt(
-      sourceConfig.roomName,
-      sourceConfig.containerX,
-      sourceConfig.containerY
-    );
-    if (container && container.hits < container.hitsMax * 0.8) {
-      return {
-        target: container,
-        type: 'repair'
-      };
-    }
-  }
-
-  // 3. Road construction sites
-  const roadSites = creep.room.find(FIND_CONSTRUCTION_SITES, {
+  // 1. Road construction sites (highest priority)
+  var roadSites = creep.room.find(FIND_CONSTRUCTION_SITES, {
     filter: function (site) {
       return site.structureType === STRUCTURE_ROAD;
     }
   });
   if (roadSites.length > 0) {
-    const closest = creep.pos.findClosestByPath(roadSites) ||
+    var closestRoad = creep.pos.findClosestByPath(roadSites) ||
       creep.pos.findClosestByRange(roadSites) ||
       roadSites[0];
-    return {
-      target: closest,
-      type: 'build'
-    };
+    return { target: closestRoad, type: 'build' };
+  }
+
+  // 2. Container construction sites
+  for (var i = 0; i < remoteConfig.sources.length; i++) {
+    var sourceConfig = remoteConfig.sources[i];
+    if (!sourceConfig || sourceConfig.enabled !== true) continue;
+    var site = remote.findContainerSiteAt(
+      sourceConfig.roomName,
+      sourceConfig.containerX,
+      sourceConfig.containerY
+    );
+    if (site) return { target: site, type: 'build' };
+  }
+
+  // 3. Link construction sites (if any in room)
+  var linkSites = creep.room.find(FIND_CONSTRUCTION_SITES, {
+    filter: function (site) {
+      return site.structureType === STRUCTURE_LINK;
+    }
+  });
+  if (linkSites.length > 0) {
+    var closestLink = creep.pos.findClosestByPath(linkSites) ||
+      creep.pos.findClosestByRange(linkSites) ||
+      linkSites[0];
+    return { target: closestLink, type: 'build' };
+  }
+
+  // 4. Other construction sites
+  var otherSites = creep.room.find(FIND_CONSTRUCTION_SITES);
+  if (otherSites.length > 0) {
+    var closestOther = creep.pos.findClosestByPath(otherSites) ||
+      creep.pos.findClosestByRange(otherSites) ||
+      otherSites[0];
+    return { target: closestOther, type: 'build' };
+  }
+
+  // 5. Road repair (only roads, not containers/ramparts/walls)
+  var roads = creep.room.find(FIND_STRUCTURES, {
+    filter: function (s) {
+      return s.structureType === STRUCTURE_ROAD &&
+        s.hits < s.hitsMax * ROAD_REPAIR_START;
+    }
+  });
+  if (roads.length > 0) {
+    // Prioritize roads near sources and exits (closest by path)
+    var closest = creep.pos.findClosestByPath(roads) ||
+      creep.pos.findClosestByRange(roads) ||
+      roads[0];
+    return { target: closest, type: 'repair' };
   }
 
   return null;
@@ -68,13 +85,13 @@ function closestTarget(creep, targets) {
 }
 
 function findRemoteEnergy(creep, remoteConfig) {
-  const candidates = [];
+  var candidates = [];
 
-  for (let index = 0; index < remoteConfig.sources.length; index++) {
-    const sourceConfig = remoteConfig.sources[index];
+  for (var i = 0; i < remoteConfig.sources.length; i++) {
+    var sourceConfig = remoteConfig.sources[i];
     if (!sourceConfig || sourceConfig.enabled !== true) continue;
 
-    const container = remote.findContainerAt(
+    var container = remote.findContainerAt(
       sourceConfig.roomName,
       sourceConfig.containerX,
       sourceConfig.containerY
@@ -83,66 +100,55 @@ function findRemoteEnergy(creep, remoteConfig) {
       container &&
       container.store.getUsedCapacity(RESOURCE_ENERGY) > 0
     ) {
-      candidates.push({
-        target: container,
-        type: 'withdraw'
-      });
+      candidates.push({ target: container, type: 'withdraw' });
     }
   }
 
-  const dropped = creep.room.find(FIND_DROPPED_RESOURCES);
-  for (let index = 0; index < dropped.length; index++) {
+  var dropped = creep.room.find(FIND_DROPPED_RESOURCES);
+  for (var j = 0; j < dropped.length; j++) {
     if (
-      dropped[index].resourceType === RESOURCE_ENERGY &&
-      dropped[index].amount > 0
+      dropped[j].resourceType === RESOURCE_ENERGY &&
+      dropped[j].amount > 0
     ) {
-      candidates.push({
-        target: dropped[index],
-        type: 'pickup'
-      });
+      candidates.push({ target: dropped[j], type: 'pickup' });
     }
   }
 
-  const tombstones = creep.room.find(FIND_TOMBSTONES);
-  for (let index = 0; index < tombstones.length; index++) {
-    if (
-      tombstones[index].store.getUsedCapacity(RESOURCE_ENERGY) > 0
-    ) {
-      candidates.push({
-        target: tombstones[index],
-        type: 'withdraw'
-      });
+  var tombstones = creep.room.find(FIND_TOMBSTONES);
+  for (var k = 0; k < tombstones.length; k++) {
+    if (tombstones[k].store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+      candidates.push({ target: tombstones[k], type: 'withdraw' });
     }
   }
 
-  const ruins = creep.room.find(FIND_RUINS);
-  for (let index = 0; index < ruins.length; index++) {
-    if (ruins[index].store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-      candidates.push({
-        target: ruins[index],
-        type: 'withdraw'
-      });
+  var ruins = creep.room.find(FIND_RUINS);
+  for (var r = 0; r < ruins.length; r++) {
+    if (ruins[r].store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+      candidates.push({ target: ruins[r], type: 'withdraw' });
     }
   }
 
-  const target = closestTarget(
+  var target = closestTarget(
     creep,
-    candidates.map(candidate => candidate.target)
+    candidates.map(function (c) { return c.target; })
   );
   if (!target) return null;
 
-  return candidates.find(candidate => candidate.target === target) || null;
+  for (var ci = 0; ci < candidates.length; ci++) {
+    if (candidates[ci].target === target) return candidates[ci];
+  }
+  return null;
 }
 
 function findRemoteSource(creep, remoteConfig) {
-  const sources = [];
-  const sourceIds = {};
+  var sources = [];
+  var sourceIds = {};
 
-  for (let index = 0; index < remoteConfig.sources.length; index++) {
-    const sourceConfig = remoteConfig.sources[index];
+  for (var i = 0; i < remoteConfig.sources.length; i++) {
+    var sourceConfig = remoteConfig.sources[i];
     if (!sourceConfig || sourceConfig.enabled !== true) continue;
 
-    const source = sourceConfig.id
+    var source = sourceConfig.id
       ? Game.getObjectById(sourceConfig.id)
       : null;
     if (!source || source.energy <= 0) continue;
@@ -151,11 +157,11 @@ function findRemoteSource(creep, remoteConfig) {
     sourceIds[source.id] = true;
   }
 
-  const visibleSources = creep.room.find(FIND_SOURCES);
-  for (let index = 0; index < visibleSources.length; index++) {
-    const source = visibleSources[index];
-    if (source.energy <= 0 || sourceIds[source.id]) continue;
-    sources.push(source);
+  var visibleSources = creep.room.find(FIND_SOURCES);
+  for (var j = 0; j < visibleSources.length; j++) {
+    var vs = visibleSources[j];
+    if (vs.energy <= 0 || sourceIds[vs.id]) continue;
+    sources.push(vs);
   }
 
   return closestTarget(creep, sources);
@@ -169,13 +175,13 @@ function findHomeEnergy(creep) {
     return creep.room.storage;
   }
 
-  const structures = creep.room.find(FIND_STRUCTURES);
-  for (let index = 0; index < structures.length; index++) {
+  var structures = creep.room.find(FIND_STRUCTURES);
+  for (var i = 0; i < structures.length; i++) {
     if (
-      structures[index].structureType === STRUCTURE_CONTAINER &&
-      structures[index].store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      structures[i].structureType === STRUCTURE_CONTAINER &&
+      structures[i].store.getUsedCapacity(RESOURCE_ENERGY) > 0
     ) {
-      return structures[index];
+      return structures[i];
     }
   }
 
@@ -184,13 +190,13 @@ function findHomeEnergy(creep) {
 
 function acquireEnergy(creep, remoteConfig) {
   if (creep.pos.roomName === creep.memory.remoteRoom) {
-    const remoteEnergy = findRemoteEnergy(creep, remoteConfig);
+    var remoteEnergy = findRemoteEnergy(creep, remoteConfig);
     if (remoteEnergy) {
       delete creep.memory.needsHomeEnergy;
       creep.memory.task = remoteEnergy.type === 'pickup'
         ? 'pickup:remote-energy'
         : 'withdraw:remote-energy';
-      const result = remoteEnergy.type === 'pickup'
+      var result = remoteEnergy.type === 'pickup'
         ? creep.pickup(remoteEnergy.target)
         : creep.withdraw(remoteEnergy.target, RESOURCE_ENERGY);
       if (result === ERR_NOT_IN_RANGE) {
@@ -199,12 +205,12 @@ function acquireEnergy(creep, remoteConfig) {
       return;
     }
 
-    const source = findRemoteSource(creep, remoteConfig);
+    var source = findRemoteSource(creep, remoteConfig);
     if (source) {
       delete creep.memory.needsHomeEnergy;
       creep.memory.task = 'harvest:remote-source';
-      const result = creep.harvest(source);
-      if (result === ERR_NOT_IN_RANGE) {
+      var hr = creep.harvest(source);
+      if (hr === ERR_NOT_IN_RANGE) {
         creep.moveTo(source, { reusePath: 10 });
       }
       return;
@@ -221,13 +227,13 @@ function acquireEnergy(creep, remoteConfig) {
 
   if (creep.pos.roomName === creep.memory.homeRoom) {
     if (creep.memory.needsHomeEnergy) {
-      const homeEnergy = findHomeEnergy(creep);
+      var homeEnergy = findHomeEnergy(creep);
       if (homeEnergy) {
         creep.memory.task = 'withdraw:home-energy-fallback';
-        const result = creep.withdraw(homeEnergy, RESOURCE_ENERGY);
-        if (result === OK) {
+        var wr = creep.withdraw(homeEnergy, RESOURCE_ENERGY);
+        if (wr === OK) {
           delete creep.memory.needsHomeEnergy;
-        } else if (result === ERR_NOT_IN_RANGE) {
+        } else if (wr === ERR_NOT_IN_RANGE) {
           creep.moveTo(homeEnergy, { reusePath: 10 });
         }
       } else {
@@ -244,7 +250,7 @@ function acquireEnergy(creep, remoteConfig) {
     return;
   }
 
-  const targetRoom = creep.memory.needsHomeEnergy
+  var targetRoom = creep.memory.needsHomeEnergy
     ? creep.memory.homeRoom
     : creep.memory.remoteRoom;
   creep.memory.task = creep.memory.needsHomeEnergy
@@ -273,9 +279,9 @@ function retireToHomeBuilder(creep) {
 
 module.exports = {
   run: function (creep) {
-    const homeRoom = creep.memory.homeRoom;
-    const remoteRoom = creep.memory.remoteRoom;
-    const remoteConfig = remote.getRemoteConfig(homeRoom, remoteRoom);
+    var homeRoom = creep.memory.homeRoom;
+    var remoteRoom = creep.memory.remoteRoom;
+    var remoteConfig = remote.getRemoteConfig(homeRoom, remoteRoom);
 
     if (!remoteConfig) {
       remote.retreat(creep, homeRoom);
@@ -307,18 +313,18 @@ module.exports = {
     if (creep.pos.roomName !== remoteRoom) {
       creep.moveTo(
         new RoomPosition(25, 25, remoteRoom),
-      { reusePath: 20 }
-    );
-    return;
+        { reusePath: 20 }
+      );
+      return;
     }
 
-    const work = getRemoteWork(creep, remoteConfig);
+    var work = getRemoteWork(creep, remoteConfig);
     if (!work) {
       retireToHomeBuilder(creep);
       return;
     }
 
-    const result = work.type === 'build'
+    var result = work.type === 'build'
       ? creep.build(work.target)
       : creep.repair(work.target);
     if (result === ERR_NOT_IN_RANGE) {

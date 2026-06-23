@@ -1,7 +1,11 @@
 const remote = require('manager.remote');
 
+// Container repair thresholds (miner-only; builders don't touch these).
+var CONTAINER_REPAIR_START = 200000;
+var CONTAINER_REPAIR_STOP  = 240000;
+
 function getAssignedSource(creep, sourceConfig) {
-  let source = sourceConfig.id
+  var source = sourceConfig.id
     ? Game.getObjectById(sourceConfig.id)
     : null;
 
@@ -20,12 +24,10 @@ function getAssignedSource(creep, sourceConfig) {
 
 module.exports = {
   run: function (creep) {
-    const homeRoom = creep.memory.homeRoom;
-    const remoteRoom = creep.memory.remoteRoom;
-    const sourceConfig = remote.getSourceConfig(
-      homeRoom,
-      remoteRoom,
-      creep.memory.sourceIndex
+    var homeRoom = creep.memory.homeRoom;
+    var remoteRoom = creep.memory.remoteRoom;
+    var sourceConfig = remote.getSourceConfig(
+      homeRoom, remoteRoom, creep.memory.sourceIndex
     );
 
     if (!sourceConfig || sourceConfig.enabled !== true) {
@@ -37,11 +39,13 @@ module.exports = {
       return;
     }
 
-    const containerPosition = new RoomPosition(
+    var containerPosition = new RoomPosition(
       sourceConfig.containerX,
       sourceConfig.containerY,
       sourceConfig.roomName
     );
+
+    // Move onto container tile
     if (
       creep.pos.roomName !== containerPosition.roomName ||
       creep.pos.x !== containerPosition.x ||
@@ -54,45 +58,48 @@ module.exports = {
       return;
     }
 
-    const source = getAssignedSource(creep, sourceConfig);
+    var source = getAssignedSource(creep, sourceConfig);
     if (!source) return;
 
     remote.ensureContainerSite(sourceConfig);
-    const container = remote.findContainerAt(
+    var container = remote.findContainerAt(
       sourceConfig.roomName,
       sourceConfig.containerX,
       sourceConfig.containerY
     );
-    const site = remote.findContainerSiteAt(
+    var site = remote.findContainerSiteAt(
       sourceConfig.roomName,
       sourceConfig.containerX,
       sourceConfig.containerY
     );
-    const carried = creep.store.getUsedCapacity(RESOURCE_ENERGY);
+    var carried = creep.store.getUsedCapacity(RESOURCE_ENERGY);
 
+    // 1. Build container site if exists
     if (site && carried > 0) {
       creep.build(site);
       return;
     }
 
+    // 2. Transfer energy to container if not full
     if (
       container &&
       carried > 0 &&
       container.store.getFreeCapacity(RESOURCE_ENERGY) > 0
     ) {
       creep.transfer(container, RESOURCE_ENERGY);
+      return;
     }
 
-    const result = creep.harvest(source);
+    // 3. Harvest (primary job)
+    var harvestResult = creep.harvest(source);
+
+    // 4. Repair container as idle work (only when harvest yields nothing)
+    //    Miner stays on container tile, only repairs its own container.
     if (
       container &&
-      container.hits < container.hitsMax &&
-      creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0 &&
-      (
-        source.energy === 0 ||
-        result === ERR_NOT_ENOUGH_RESOURCES ||
-        result === ERR_FULL
-      )
+      container.hits < CONTAINER_REPAIR_START &&
+      carried > 0 &&
+      (source.energy === 0 || harvestResult === ERR_NOT_ENOUGH_RESOURCES || harvestResult === ERR_FULL)
     ) {
       creep.repair(container);
     }

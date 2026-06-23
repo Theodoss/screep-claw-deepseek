@@ -704,11 +704,15 @@ function getReserverLeadTicks(homeRoomName, remoteRoomName, body) {
 // drops energy directly onto the container tile, which auto-collects it.
 // CARRY is wasted (same principle as D003 for local miners).
 function buildRemoteMinerBody(energyCapacity) {
+  // Must include CARRY for container repair (creep needs energy to repair).
+  if (energyCapacity >= 800) {
+    return [WORK, WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];
+  }
   if (energyCapacity >= 550) {
-    return [WORK, WORK, WORK, WORK, WORK, MOVE];
+    return [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE];
   }
   if (energyCapacity >= 350) {
-    return [WORK, WORK, WORK, MOVE];
+    return [WORK, WORK, CARRY, MOVE];
   }
   return null;
 }
