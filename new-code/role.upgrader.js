@@ -1,6 +1,7 @@
 const support = require('role.support');
 const sourceSlots = require('manager.rcl1SourceSlots');
 const economy = require('manager.economy');
+const colonyStates = require('config.colonyStates');
 
 function getFallbackSource(creep) {
   return sourceSlots.selectSourceForSupport(creep.room, creep);
@@ -24,14 +25,15 @@ function acquireFallbackEnergy(creep) {
 
 module.exports = {
   run: function (creep) {
-    // ── Expansion guard: stop upgrading home, funnel energy to spawn/extensions ──
+    // ── Colony state / expansion guard: stop upgrading, funnel energy to spawn/extensions ──
     var mission = Memory.expansionMission;
-    if (
-      mission &&
-      mission.active &&
-      mission.phase !== 'done' &&
-      mission.home === creep.room.name
-    ) {
+    var redirectEnergy =
+      colonyStates.isUpgradeSuspended(creep.room.name) ||
+      (mission &&
+       mission.active &&
+       mission.phase !== 'done' &&
+       mission.home === creep.room.name);
+    if (redirectEnergy) {
       var controllerEmergency =
         creep.room.controller &&
         typeof creep.room.controller.ticksToDowngrade === 'number' &&

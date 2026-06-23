@@ -3,6 +3,7 @@ const bodyPolicy = require('body.policy');
 const economy = require('manager.economy');
 const population = require('manager.population');
 const support = require('role.support');
+const colonyStates = require('config.colonyStates');
 
 const DISCOVERY_INTERVAL = 50;
 const ENERGY_STARVATION_TICKS = 50;
@@ -614,15 +615,22 @@ function run(room, state) {
     : 0;
 
   // Expansion mission: suspend home upgrade to funnel energy to expansion spawn.
+  // Colony state 'colonize'/'save': also suspend/limit upgrade.
   // Exception: controller emergency (downgrade imminent) → keep minimum upgrade.
   if (
-    Memory.expansionMission &&
-    Memory.expansionMission.active &&
-    Memory.expansionMission.phase !== 'done' &&
-    room.name === Memory.expansionMission.home &&
-    !economyState.controllerEmergency
+    colonyStates.isUpgradeSuspended(room.name) ||
+    (Memory.expansionMission &&
+     Memory.expansionMission.active &&
+     Memory.expansionMission.phase !== 'done' &&
+     room.name === Memory.expansionMission.home)
   ) {
-    requestedUpgradeWork = 0;
+    if (!economyState.controllerEmergency) {
+      requestedUpgradeWork = 0;
+    }
+  }
+  var colUpgradeCap = colonyStates.getUpgraderWorkCap(room.name);
+  if (colUpgradeCap !== null && requestedUpgradeWork > colUpgradeCap) {
+    requestedUpgradeWork = colUpgradeCap;
   }
 
   const populationPlan = population.getPlan(
