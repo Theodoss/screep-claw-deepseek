@@ -333,7 +333,7 @@ function recordUpgrade(room, amount) {
   }
 }
 
-const UPGRADE_CONTAINER_RANGE = 4;
+const UPGRADE_CONTAINER_RANGE = 6;
 
 function getUpgradeContainers(room) {
   // Returns all containers within UPGRADE_CONTAINER_RANGE tiles of
