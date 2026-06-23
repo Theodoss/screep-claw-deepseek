@@ -33,6 +33,12 @@
 
 var PATH_STUCK_LIMIT = 3;
 
+// Per-room swamp cost overrides for known swamp-heavy rooms.
+// Lower values make PathFinder less likely to give up on the room.
+var SWAMP_COST_OVERRIDE = {
+  'W48N22': 3
+};
+
 // ── Nav flag fingerprint (detects flag changes) ──
 function getNavFingerprint() {
   var names = [];
@@ -111,7 +117,7 @@ function buildCostMatrix(roomName, allowedRooms) {
       if (tile === TERRAIN_MASK_WALL) {
         costs.set(x, y, 0xFF);
       } else if (tile === TERRAIN_MASK_SWAMP) {
-        costs.set(x, y, 5);
+        costs.set(x, y, SWAMP_COST_OVERRIDE[roomName] || 5);
       } else {
         costs.set(x, y, 2);
       }
@@ -175,7 +181,7 @@ function computeStepPath(creep, nextRoom) {
       maxRooms: 2,
       plainCost: 2,
       swampCost: 5,
-      maxOps: 12000
+      maxOps: 20000
     }
   );
 
@@ -190,6 +196,60 @@ function computeStepPath(creep, nextRoom) {
   }
 
   return null;
+}
+
+// ── Fallback: exit-directed moveTo (same room only, no cross-room pathfinder) ──
+// Uses Game.map.findExit to find the exit direction, then picks a walkable
+// edge tile in the current room and moves there.  This avoids the cross-room
+// moveTo that triggers global pathfinder oscillation.
+function moveToFallback(creep, nextRoom) {
+  var exitDir = Game.map.findExit(creep.pos.roomName, nextRoom);
+  if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) {
+    // Last resort: direct cross-room moveTo
+    creep.moveTo(new RoomPosition(25, 25, nextRoom), {
+      reusePath: 50, swampCost: 5,
+      visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
+    });
+    return;
+  }
+
+  var terrain = Game.map.getRoomTerrain(creep.pos.roomName);
+  var targetX, targetY;
+
+  if (exitDir === FIND_EXIT_TOP)       { targetY = 1;  targetX = 25; }
+  else if (exitDir === FIND_EXIT_BOTTOM) { targetY = 48; targetX = 25; }
+  else if (exitDir === FIND_EXIT_LEFT)   { targetX = 1;  targetY = 25; }
+  else if (exitDir === FIND_EXIT_RIGHT)  { targetX = 48; targetY = 25; }
+  else { return; }
+
+  // Try to find a walkable tile near the exit center
+  var found = false;
+  for (var offset = 0; offset < 24; offset++) {
+    var candidates = [];
+    if (exitDir === FIND_EXIT_TOP || exitDir === FIND_EXIT_BOTTOM) {
+      candidates.push({ x: targetX + offset, y: targetY });
+      candidates.push({ x: targetX - offset, y: targetY });
+    } else {
+      candidates.push({ x: targetX, y: targetY + offset });
+      candidates.push({ x: targetX, y: targetY - offset });
+    }
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var cx = candidates[ci].x, cy = candidates[ci].y;
+      if (cx >= 1 && cx <= 48 && cy >= 1 && cy <= 48 &&
+          terrain.get(cx, cy) !== TERRAIN_MASK_WALL) {
+        targetX = cx; targetY = cy; found = true; break;
+      }
+    }
+    if (found) break;
+  }
+
+  if (found) {
+    creep.moveTo(
+      new RoomPosition(targetX, targetY, creep.pos.roomName),
+      { reusePath: 20, swampCost: 5,
+        visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' } }
+    );
+  }
 }
 
 // ── Invalidation checks ──
@@ -321,13 +381,10 @@ module.exports = {
 
     var nextRoom = t.route[t.routeIdx];
 
-    // ── Oscillation lock: force moveTo next room center ──
+    // ── Oscillation lock: force exit-directed movement ──
     if (t.lockUntil && Game.time < t.lockUntil) {
-      var lr = creep.moveTo(new RoomPosition(25, 25, nextRoom), {
-        reusePath: 50, swampCost: 5,
-        visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
-      });
-      t.lastResult = 'moveTo:lock:' + lr;
+      moveToFallback(creep, nextRoom);
+      t.lastResult = 'moveTo:lock';
       return true;
     }
 
@@ -376,12 +433,9 @@ module.exports = {
       return true;
     }
 
-    // ── Fallback: moveTo next room center ──
-    var fr = creep.moveTo(new RoomPosition(25, 25, nextRoom), {
-      reusePath: 50, swampCost: 5,
-      visualizePathStyle: { stroke: '#ffaa00', lineStyle: 'dotted' }
-    });
-    t.lastResult = 'moveTo:fallback:' + fr;
+    // ── Fallback: exit-directed moveTo (same room, no cross-room pathfinder) ──
+    moveToFallback(creep, nextRoom);
+    t.lastResult = 'moveTo:fallback';
     return true;
   }
 };
