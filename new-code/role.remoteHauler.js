@@ -1,6 +1,7 @@
 const economy = require('manager.economy');
 const remote = require('manager.remote');
 const managerEconomy = require('manager.economy');
+const remotePath = require('remote.path');
 
 function closestTarget(creep, targets) {
   if (targets.length === 0) return null;
@@ -15,6 +16,37 @@ function closestTarget(creep, targets) {
 // These remote rooms drop close to this link — avoids long walk to storage.
 var ENTRANCE_LINK_ID = '6a365015c5a7673e2ea6a3d0';
 var ENTRANCE_LINK_ROOMS = { 'W48N25': true, 'W48N26': true };
+
+function getHomePathAnchor(creep) {
+  const homeRoom = Game.rooms[creep.memory.homeRoom];
+  if (!homeRoom) return null;
+
+  if (ENTRANCE_LINK_ROOMS[creep.memory.remoteRoom]) {
+    const entranceLink = Game.getObjectById(ENTRANCE_LINK_ID);
+    if (entranceLink) return entranceLink.pos;
+  }
+
+  if (homeRoom.storage) return homeRoom.storage.pos;
+
+  const spawns = homeRoom.find(FIND_MY_SPAWNS);
+  return spawns.length > 0 ? spawns[0].pos : null;
+}
+
+function followHaulPath(creep, sourceConfig, reverse) {
+  if (!sourceConfig) return false;
+
+  const homeAnchor = getHomePathAnchor(creep);
+  const remoteTarget = remote.getWaitPosition(sourceConfig);
+  if (!homeAnchor || !remoteTarget) return false;
+
+  return remotePath.follow(
+    creep,
+    sourceConfig,
+    homeAnchor,
+    remoteTarget,
+    reverse
+  );
+}
 
 function findHomeDeliveryTarget(creep) {
   // Priority 1: Entrance link for selected remote rooms (W48N25, W48N26).
@@ -88,8 +120,10 @@ function waitAtHome(creep) {
   }
 }
 
-function deliver(creep) {
+function deliver(creep, sourceConfig) {
   if (creep.pos.roomName !== creep.memory.homeRoom) {
+    if (followHaulPath(creep, sourceConfig, true)) return;
+
     creep.moveTo(
       new RoomPosition(25, 25, creep.memory.homeRoom),
       { reusePath: 20 }
@@ -199,6 +233,8 @@ function collect(creep, sourceConfig) {
   };
 
   if (creep.pos.roomName !== containerRoom) {
+    if (followHaulPath(creep, sourceConfig, false)) return;
+
     creep.moveTo(containerPosition, moveOpts);
     return;
   }
@@ -216,6 +252,8 @@ function collect(creep, sourceConfig) {
   }
 
   if (creep.pos.getRangeTo(containerPosition) > 1) {
+    if (followHaulPath(creep, sourceConfig, false)) return;
+
     creep.moveTo(containerPosition, moveOpts);
     return;
   }
@@ -267,7 +305,7 @@ module.exports = {
     if (remote.isRemotePaused(homeRoom, remoteRoom)) {
       // Deliver energy home before retreating so it isn't trapped in the hauler.
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-        deliver(creep);
+        deliver(creep, sourceConfig);
         return;
       }
       remote.retreat(creep, homeRoom);
@@ -286,7 +324,7 @@ module.exports = {
     }
 
     if (creep.memory.delivering) {
-      deliver(creep);
+      deliver(creep, sourceConfig);
       return;
     }
 
