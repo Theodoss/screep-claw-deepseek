@@ -27,6 +27,7 @@ const towerManager = require('manager.tower');
 const roomPlanner = require('planner.roomPlanner');
 const construction = require('manager.construction');
 const linkManager = require('manager.link');
+const frontBasePlanner = require('planner.frontBase');
 const ROOM_PLANNER_ENABLED = false;
 const ROOM_PLANNER_ACTIVATION_VERSION = 1;
 
@@ -64,6 +65,24 @@ function runBootstrapFallback(room) {
       room: room.name
     });
   }
+}
+
+function shouldAutoPlanFrontBase(room) {
+  if (!room || !room.controller || !room.controller.my) return false;
+
+  var spawns = room.find(FIND_MY_SPAWNS);
+  if (spawns.length === 0) return false;
+
+  var mission = Memory.expansionMission;
+  if (
+    mission &&
+    mission.targetRoom === room.name &&
+    mission.phase !== 'done'
+  ) {
+    return true;
+  }
+
+  return room.name === 'W47N22';
 }
 
 function activateRoomPlanner(roomName) {
@@ -174,6 +193,9 @@ module.exports.loop = function () {
     // Front-base construction: place sites from Memory.rooms[name].plan
     try {
       var plan = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].plan;
+      if (!plan && shouldAutoPlanFrontBase(room)) {
+        plan = frontBasePlanner.init(roomName);
+      }
       if (plan && plan.type === 'frontBase') {
         construction.run(roomName);
       }

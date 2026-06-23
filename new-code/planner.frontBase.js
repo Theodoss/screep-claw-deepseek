@@ -206,7 +206,7 @@ function planRoad(room, terrain, occupied, from, to, roadReserved, sourceBlock, 
   for (var i = 0; i < path.length; i++) {
     var step = path[i];
     var key = posKey(step.x, step.y);
-    if (seen[key] || reserved[key]) continue;
+    if (seen[key] || roadReserved[key]) continue;
     seen[key] = true;
     roads.push({ x: step.x, y: step.y });
   }
@@ -270,18 +270,34 @@ function init(roomName, force) {
       }
     }
     if (!container) {
-      console.log('[frontBase:warn] source ' + source.id + ' has no adjacent container');
-      continue;
+      // No container yet — plan one on the best adjacent open tile closest to spawn
+      var adjTiles = nearbyOpenTiles(terrain, occupied, { x: source.pos.x, y: source.pos.y }, 1, 1, reserved);
+      adjTiles.sort(function (a, b) {
+        return getRange(a, anchor) - getRange(b, anchor);
+      });
+      if (adjTiles.length > 0) {
+        var bestTile = adjTiles[0];
+        reserved[posKey(bestTile.x, bestTile.y)] = true;
+        sourceEntries.push({
+          sourceId: source.id,
+          containerId: null,
+          containerPos: { x: bestTile.x, y: bestTile.y },
+          minerPos: { x: bestTile.x, y: bestTile.y },
+          road: []
+        });
+      } else {
+        console.log('[frontBase:warn] source ' + source.id + ' has no adjacent open tile');
+      }
+    } else {
+      reserved[posKey(container.pos.x, container.pos.y)] = true;
+      sourceEntries.push({
+        sourceId: source.id,
+        containerId: container.id,
+        containerPos: { x: container.pos.x, y: container.pos.y },
+        minerPos: { x: container.pos.x, y: container.pos.y },
+        road: []
+      });
     }
-    reserved[posKey(container.pos.x, container.pos.y)] = true;
-
-    sourceEntries.push({
-      sourceId: source.id,
-      containerId: container.id,
-      containerPos: { x: container.pos.x, y: container.pos.y },
-      minerPos: { x: container.pos.x, y: container.pos.y },
-      road: []
-    });
   }
 
   // ---- controller ----
@@ -299,6 +315,14 @@ function init(roomName, force) {
     for (var cdy = -1; cdy <= 1; cdy++) {
       controllerAdjacent[posKey(controller.pos.x + cdx, controller.pos.y + cdy)] = true;
     }
+  }
+
+  // ---- controller container: range 2-3 open tile near controller ----
+  var controllerContainerPos = null;
+  var ccCandidates = nearbyOpenTiles(terrain, occupied, controllerPos, 2, 3, reserved);
+  if (ccCandidates.length > 0) {
+    controllerContainerPos = { x: ccCandidates[0].x, y: ccCandidates[0].y };
+    reserved[posKey(controllerContainerPos.x, controllerContainerPos.y)] = true;
   }
 
   // ---- storage: near spawn (2-4 tiles), prefer plain ----
@@ -566,7 +590,7 @@ function init(roomName, force) {
     controller: {
       pos: controllerPos,
       road: ctrlRoad ? ctrlRoad.map(function (p) { return { x: p.x, y: p.y }; }) : [],
-      containerPos: null,
+      containerPos: controllerContainerPos,
       linkPos: controllerLinkPos
     },
     storage: storagePos ? {

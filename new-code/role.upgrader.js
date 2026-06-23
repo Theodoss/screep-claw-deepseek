@@ -168,6 +168,40 @@ module.exports = {
       return;
     }
 
+    // Early RCL2 without controller container: self-supply from source containers
+    // or direct harvesting.  Don't drain spawn/extensions — builders need that
+    // energy to build the extensions/containers that unlock normal economy.
+    if (
+      creep.room.controller &&
+      creep.room.controller.level <= 2 &&
+      upgradeContainers.length === 0
+    ) {
+      var sourceContainersEarly = creep.room.find(FIND_STRUCTURES, {
+        filter: function (s) {
+          return s.structureType === STRUCTURE_CONTAINER &&
+            s.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+        }
+      });
+
+      if (sourceContainersEarly.length > 0) {
+        var earlySource = creep.pos.findClosestByPath(sourceContainersEarly);
+        if (earlySource) {
+          creep.memory.task = 'withdraw:early-source-container';
+          var earlyResult = creep.withdraw(earlySource, RESOURCE_ENERGY);
+          if (earlyResult === ERR_NOT_IN_RANGE) {
+            creep.moveTo(earlySource, {
+              visualizePathStyle: { stroke: '#ffaa00' }
+            });
+          }
+          return;
+        }
+      }
+
+      creep.memory.task = 'harvest:early-upgrader-fallback';
+      acquireFallbackEnergy(creep);
+      return;
+    }
+
     // Spawn/extensions before storage: they are closer to the controller
     // and faster to reach.  Walking to a distant storage while extensions
     // have energy wastes upgrader uptime.

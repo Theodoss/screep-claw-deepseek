@@ -2,11 +2,10 @@
  * manager.construction.js — 根據 frontBase plan 放置 construction sites
  *
  * 規則：
- *  - 每 tick 最多建立 3 個 sites
- *  - 先建當前 RCL 可用建築
+ *  - RCL2 寬鬆 (max 10 active sites)；RCL3+ 回歸 SITES_PER_TICK+3
+ *  - 優先 container/extensions → 再 tower/storage/link → 最後 road/rampart
  *  - 不建立超過目前 RCL 的 site
  *  - 不重複建立已有建築 / 已有 site
- *  - 如果 plan 已存在，不每 tick 重算（除非 force=true）
  *
  * Console:
  *   require('manager.construction').run('W47N22');
@@ -25,6 +24,11 @@ function posKey(x, y) {
 function isWallInRoom(roomName, x, y) {
   var terrain = Game.map.getRoomTerrain(roomName);
   return terrain.get(x, y) === TERRAIN_MASK_WALL;
+}
+
+function isSwampInRoom(roomName, x, y) {
+  var terrain = Game.map.getRoomTerrain(roomName);
+  return terrain.get(x, y) === TERRAIN_MASK_SWAMP;
 }
 
 function countStructureType(room, structureType) {
@@ -55,66 +59,116 @@ function getAllowedCount(structureType, rcl) {
   return CONTROLLER_STRUCTURES[structureType][rcl] || 0;
 }
 
+function inBounds(x, y, margin) {
+  var edge = margin || 1;
+  return x >= edge && x <= 49 - edge && y >= edge && y <= 49 - edge;
+}
+
+function isTileOpen(room, roomName, x, y) {
+  if (!inBounds(x, y, 1)) return false;
+  if (isWallInRoom(roomName, x, y)) return false;
+  var structs = room.lookForAt(LOOK_STRUCTURES, x, y);
+  for (var i = 0; i < structs.length; i++) {
+    var st = structs[i].structureType;
+    if (st === STRUCTURE_ROAD) continue;
+    if (st === STRUCTURE_CONTAINER) continue;
+    if (st === STRUCTURE_RAMPART) continue;
+    return false;
+  }
+  var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
+  for (var j = 0; j < sites.length; j++) {
+    var cs = sites[j].structureType;
+    if (cs === STRUCTURE_ROAD) continue;
+    if (cs === STRUCTURE_CONTAINER) continue;
+    if (cs === STRUCTURE_RAMPART) continue;
+    return false;
+  }
+  return true;
+}
+
+function isAdjacentToSource(room, x, y) {
+  var sources = room.find(FIND_SOURCES);
+  for (var i = 0; i < sources.length; i++) {
+    if (Math.abs(sources[i].pos.x - x) <= 1 && Math.abs(sources[i].pos.y - y) <= 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pickControllerContainer(room, roomName) {
+  var controller = room.controller;
+  if (!controller) return null;
+
+  // Find best open tile at range 2-3 from controller, non-source-adjacent,
+  // prefer plain over swamp, closer to spawn
+  var candidates = [];
+  for (var dx = -3; dx <= 3; dx++) {
+    for (var dy = -3; dy <= 3; dy++) {
+      var r = Math.max(Math.abs(dx), Math.abs(dy));
+      if (r < 2 || r > 3) continue;
+      var x = controller.pos.x + dx;
+      var y = controller.pos.y + dy;
+      if (!isTileOpen(room, roomName, x, y)) continue;
+      if (isAdjacentToSource(room, x, y)) continue;
+      candidates.push({ x: x, y: y, range: r, swamp: isSwampInRoom(roomName, x, y) });
+    }
+  }
+  candidates.sort(function (a, b) {
+    return a.range - b.range || (a.swamp ? 1 : 0) - (b.swamp ? 1 : 0);
+  });
+  return candidates.length > 0 ? candidates[0] : null;
+}
+
 // ---------------------------------------------------------------------------
 // collect placement candidates from plan, filtered by current RCL
 // ---------------------------------------------------------------------------
 
-function getCandidates(room, plan, rcl) {
+function getCandidates(room, plan, rcl, roomName) {
   var candidates = [];
 
-  // Priority scoring: lower = higher priority
-  // Roads: 1, Containers: 2, Extensions: 3, Towers: 4, Storage: 5, Links: 6, Ramparts: 7
+  // Priority:
+  //   source container: 1
+  //   controller container: 1.5
+  //   extension: 2
+  //   tower: 3
+  //   storage: 4
+  //   link: 5
+  //   road: 6
+  //   rampart: 7
 
-  // ---- roads ----
-  if (plan.roads) {
-    for (var i = 0; i < plan.roads.length; i++) {
-      var r = plan.roads[i];
-      candidates.push({
-        x: r.x,
-        y: r.y,
-        structureType: STRUCTURE_ROAD,
-        priority: 1
-      });
-    }
-  }
-
-  // ---- source container roads (from source entries) ----
-  if (plan.sources) {
+  // ---- source containers ----
+  if (plan.sources && rcl >= 2) {
     for (var si = 0; si < plan.sources.length; si++) {
       var s = plan.sources[si];
-      if (s.road) {
-        for (var ri = 0; ri < s.road.length; ri++) {
-          candidates.push({
-            x: s.road[ri].x,
-            y: s.road[ri].y,
-            structureType: STRUCTURE_ROAD,
-            priority: 1
-          });
-        }
+      if (s.containerPos && !s.containerId) {
+        // No container yet — place it
+        candidates.push({
+          x: s.containerPos.x,
+          y: s.containerPos.y,
+          structureType: STRUCTURE_CONTAINER,
+          priority: 1
+        });
       }
     }
   }
 
-  // ---- controller road ----
-  if (plan.controller && plan.controller.road) {
-    for (var ci = 0; ci < plan.controller.road.length; ci++) {
-      candidates.push({
-        x: plan.controller.road[ci].x,
-        y: plan.controller.road[ci].y,
-        structureType: STRUCTURE_ROAD,
-        priority: 1
-      });
+  // ---- controller container ----
+  if (rcl >= 2) {
+    var ccPos = null;
+    if (plan.controller && plan.controller.containerPos) {
+      ccPos = plan.controller.containerPos;
     }
-  }
-
-  // ---- storage road ----
-  if (plan.storage && plan.storage.road) {
-    for (var sti = 0; sti < plan.storage.road.length; sti++) {
+    if (!ccPos) {
+      var picked = pickControllerContainer(room, roomName);
+      if (picked) ccPos = picked;
+    }
+    if (ccPos) {
       candidates.push({
-        x: plan.storage.road[sti].x,
-        y: plan.storage.road[sti].y,
-        structureType: STRUCTURE_ROAD,
-        priority: 1
+        x: ccPos.x,
+        y: ccPos.y,
+        structureType: STRUCTURE_CONTAINER,
+        priority: 1.5
       });
     }
   }
@@ -128,7 +182,7 @@ function getCandidates(room, plan, rcl) {
         x: ext.x,
         y: ext.y,
         structureType: STRUCTURE_EXTENSION,
-        priority: 3
+        priority: 2
       });
     }
   }
@@ -142,7 +196,7 @@ function getCandidates(room, plan, rcl) {
         x: t.x,
         y: t.y,
         structureType: STRUCTURE_TOWER,
-        priority: 4
+        priority: 3
       });
     }
   }
@@ -153,7 +207,7 @@ function getCandidates(room, plan, rcl) {
       x: plan.storage.pos.x,
       y: plan.storage.pos.y,
       structureType: STRUCTURE_STORAGE,
-      priority: 5
+      priority: 4
     });
   }
 
@@ -166,6 +220,19 @@ function getCandidates(room, plan, rcl) {
         x: link.x,
         y: link.y,
         structureType: STRUCTURE_LINK,
+        priority: 5
+      });
+    }
+  }
+
+  // ---- roads ----
+  if (plan.roads) {
+    for (var ri = 0; ri < plan.roads.length; ri++) {
+      var r = plan.roads[ri];
+      candidates.push({
+        x: r.x,
+        y: r.y,
+        structureType: STRUCTURE_ROAD,
         priority: 6
       });
     }
@@ -200,30 +267,30 @@ function getCandidates(room, plan, rcl) {
 function run(roomName) {
   var plan = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].plan;
   if (!plan) {
-    console.log('[construction] no plan for ' + roomName + ' — run planner.frontBase.init() first');
     return 0;
   }
 
   var room = Game.rooms[roomName];
   if (!room) {
-    return 0; // no vision
-  }
-  if (!room.controller || !room.controller.my) {
-    console.log('[construction] ' + roomName + ' controller not owned');
     return 0;
   }
-
-  // Limit active construction sites
-  var activeSites = room.find(FIND_MY_CONSTRUCTION_SITES);
-  if (activeSites.length >= SITES_PER_TICK + 3) {
-    // Too many pending sites — wait for builders to catch up
+  if (!room.controller || !room.controller.my) {
     return 0;
   }
 
   var rcl = room.controller.level;
-  var candidates = getCandidates(room, plan, rcl);
 
-  // Pre-compute allowed counts for types that have RCL limits
+  // RCL2: allow more active sites so containers/extensions can be placed
+  // in parallel; builders will catch up.
+  var activeSites = room.find(FIND_MY_CONSTRUCTION_SITES);
+  var activeSiteLimit = rcl <= 2 ? 10 : SITES_PER_TICK + 3;
+  if (activeSites.length >= activeSiteLimit) {
+    return 0;
+  }
+
+  var candidates = getCandidates(room, plan, rcl, roomName);
+
+  // Pre-compute allowed counts
   var allowedCache = {};
 
   var placed = 0;
@@ -250,23 +317,19 @@ function run(roomName) {
     var current = countStructureType(room, c.structureType);
     if (current >= allowed) continue;
 
-    // Roads don't count towards RCL limits, but skip if already a road
+    // Roads: extra checks for non-walkable structures
     if (c.structureType === STRUCTURE_ROAD) {
       var existingStructures = room.lookForAt(LOOK_STRUCTURES, c.x, c.y);
       var blocked = false;
       for (var si = 0; si < existingStructures.length; si++) {
         var es = existingStructures[si];
-        // Allow building road on container (miner stands on container, road underneath is fine)
         if (es.structureType === STRUCTURE_CONTAINER) continue;
-        // Allow building road on rampart
         if (es.structureType === STRUCTURE_RAMPART) continue;
-        // Don't build road where another non-walkable structure exists
         blocked = true;
         break;
       }
       if (blocked) continue;
 
-      // Also check construction sites
       var existingSites = room.lookForAt(LOOK_CONSTRUCTION_SITES, c.x, c.y);
       var siteBlocked = false;
       for (var sj = 0; sj < existingSites.length; sj++) {
@@ -297,11 +360,7 @@ function run(roomName) {
     if (result === OK) {
       placed++;
     } else if (result === ERR_FULL) {
-      break; // max sites reached
-    } else if (result === ERR_INVALID_TARGET) {
-      // Invalid position — skip
-    } else if (result === ERR_RCL_NOT_ENOUGH) {
-      // Shouldn't happen since we filter by RCL, but skip
+      break;
     }
   }
 

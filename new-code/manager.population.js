@@ -103,7 +103,7 @@ const RCL_POLICIES = {
       harvesterMin: 0,
       harvesterMax: 4,
       minersPerSource: 1,
-      haulersPerSource: 2,
+      haulersPerSource: 1,
       linkedHaulersPerSource: 1,
       builderMax: 1,
       upgraderMax: 2,

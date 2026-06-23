@@ -519,6 +519,11 @@ function run(room, state) {
     ? support.towersCanMaintain(room)
     : true;
 
+  const controllerContainer = economy.getControllerContainer(room);
+  const extensions = room.find(FIND_MY_STRUCTURES, {
+    filter: function (s) { return s.structureType === STRUCTURE_EXTENSION; }
+  });
+
   updateMinerNames(state, miners);
 
   const minerBody = buildMinerBody(room.energyCapacityAvailable);
@@ -572,8 +577,24 @@ function run(room, state) {
     requiredHaulers,
     backlogBonus
   );
-  const dynamicHaulerTarget = Math.min(
-    HAULER_TARGET_CAP,
+
+  // Early RCL2 buildout: cap hauler count while extensions/controller-container
+  // are still being built.  Don't spawn 3-4 haulers when there's nothing to deliver to.
+  var rcl2ExtensionLimit =
+    typeof CONTROLLER_STRUCTURES !== 'undefined' &&
+    CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION]
+    ? CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION][2] || 0
+    : 5;
+  var earlyRcl2Buildout = controllerLevel <= 2 && (
+    extensions.length < rcl2ExtensionLimit ||
+    !controllerContainer
+  );
+  var haulerTargetCap = earlyRcl2Buildout
+    ? Math.max(1, state.readySources.length)
+    : HAULER_TARGET_CAP;
+
+  var dynamicHaulerTarget = Math.min(
+    haulerTargetCap,
     capacityHaulerPlan.targetCount
   );
   const haulerPlan = bodyPolicy.getHaulerPlan(
@@ -593,7 +614,9 @@ function run(room, state) {
     targetCarryParts: haulerPlan.targetCarryParts,
     targetCount: dynamicHaulerTarget,
     throughputCount: haulerPlan.throughputCount,
-    backlogBonus: backlogBonus
+    backlogBonus: backlogBonus,
+    targetCap: haulerTargetCap,
+    earlyRcl2Buildout: earlyRcl2Buildout
   };
   const economyState = economy.update(room, {
     constructionCount: constructionSites.length,
@@ -609,10 +632,12 @@ function run(room, state) {
     minersHealthy: minersHealthy,
     repairBacklog: emergencyRepair || generalRepair
   });
-  const controllerContainer = economy.getControllerContainer(room);
-  var requestedUpgradeWork = controllerContainer
-    ? economyState.upgraderWorkTarget || 0
-    : 0;
+  var requestedUpgradeWork = economyState.upgraderWorkTarget || 0;
+  if (!controllerContainer && !economyState.controllerEmergency) {
+    requestedUpgradeWork = controllerLevel <= 2
+      ? 1
+      : 0;
+  }
 
   // Colony state / expansion mission: limit upgrade to funnel energy elsewhere.
   // ALWAYS keep 1 minimal upgrader to prevent downgrade.
