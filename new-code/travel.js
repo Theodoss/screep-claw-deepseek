@@ -587,13 +587,41 @@ module.exports = {
     // ── Invalidate stale path ──
     if (
       t._pathTargetRoom !== targetRoom ||
-      getNavFingerprint() !== t._navFingerprint ||
       (t._pathRoom && creep.pos.roomName !== t._pathRoom)
     ) {
       delete t.path;
       delete t.pathIdx;
       delete t._pathRoom;
       t.pathAge = 0;
+    }
+
+    // Nav flags changed → full route + path rebuild
+    if (getNavFingerprint() !== t._navFingerprint) {
+      delete t.route;
+      delete t.routeIdx;
+      delete t.fromRoom;
+      delete t.path;
+      delete t.pathIdx;
+      delete t._pathRoom;
+      t.pathAge = 0;
+    }
+
+    // Route suspiciously long vs direct? Rebuild too
+    if (t.route && t.route.length > 4) {
+      var direct = Game.map.findRoute(
+        creep.pos.roomName, targetRoom,
+        { routeCallback: function (rn) { return 1; } }
+      );
+      if (direct !== ERR_NO_PATH && direct.length < t.route.length - 1) {
+        console.log('[travel] ' + creep.name + ' route too long (' + t.route.length + ' vs direct ' + (direct.length) + '), rebuilding');
+        delete t.route;
+        delete t.routeIdx;
+        delete t.fromRoom;
+        delete t.path;
+        delete t.pathIdx;
+        delete t._pathRoom;
+        t.pathAge = 0;
+      }
     }
 
     // Stuck too long → full route + path reset
