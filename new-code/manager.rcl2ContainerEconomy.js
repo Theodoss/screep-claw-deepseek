@@ -761,11 +761,21 @@ function run(room, state) {
     if (spawnedMaintainer) return;
   }
 
-  // Defense: hostiles present → spawn guard before support creeps
-  if (
-    hostiles.length > 0 &&
-    guards.length < guardPolicy.target
-  ) {
+  // Defense: spawn guard only when towers can't handle the threat.
+  // Conditions: hostiles > 3 AND tower energy below 1/3 capacity.
+  var towers = room.find(FIND_MY_STRUCTURES, {
+    filter: function (s) { return s.structureType === STRUCTURE_TOWER; }
+  });
+  var towerEnergy = 0;
+  var towerCapacity = 0;
+  for (var ti = 0; ti < towers.length; ti++) {
+    towerEnergy += towers[ti].store.getUsedCapacity(RESOURCE_ENERGY);
+    towerCapacity += towers[ti].store.getCapacity(RESOURCE_ENERGY);
+  }
+  var towerDepleted = towers.length > 0 && towerEnergy < towerCapacity / 3;
+  var needGuard = hostiles.length > 3 && towerDepleted;
+
+  if (needGuard && guards.length < guardPolicy.target) {
     const guardBody = buildGuardBody(room.energyCapacityAvailable);
     // Guard spawns like other creeps but with 'guard' role
     const name = `guard-${room.name}-${spawn.name}-${Game.time}`;
