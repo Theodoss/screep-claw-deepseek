@@ -25,6 +25,8 @@ const errorReporter = require('core.errorReporter');
 const rcl1SourceSlots = require('manager.rcl1SourceSlots');
 const towerManager = require('manager.tower');
 const roomPlanner = require('planner.roomPlanner');
+const construction = require('manager.construction');
+const linkManager = require('manager.link');
 const ROOM_PLANNER_ENABLED = false;
 const ROOM_PLANNER_ACTIVATION_VERSION = 1;
 
@@ -169,6 +171,19 @@ module.exports.loop = function () {
       }
     }
 
+    // Front-base construction: place sites from Memory.rooms[name].plan
+    try {
+      var plan = Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].plan;
+      if (plan && plan.type === 'frontBase') {
+        construction.run(roomName);
+      }
+    } catch (err) {
+      errorReporter.capture(err, {
+        module: 'manager.construction',
+        room: roomName
+      });
+    }
+
     try {
       economyState = rcl2ContainerEconomy.collect(room);
     } catch (err) {
@@ -245,19 +260,13 @@ module.exports.loop = function () {
     }
   }
 
-  // 7. Link transfer: entrance link → storage link
+  // 7. Link manager: three-link dynamic balancing (W49N25)
   try {
-    var entranceLink = Game.getObjectById('6a365015c5a7673e2ea6a3d0');
-    var storageLink = Game.getObjectById('6a3a1b8cd95da3a3fde03bb5');
-    if (
-      entranceLink && storageLink &&
-      entranceLink.cooldown === 0 &&
-      entranceLink.store.getUsedCapacity(RESOURCE_ENERGY) >= 400 &&
-      storageLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-    ) {
-      entranceLink.transferEnergy(storageLink);
+    var w49n25 = Game.rooms['W49N25'];
+    if (w49n25) {
+      linkManager.run(w49n25);
     }
   } catch (err) {
-    errorReporter.capture(err, { module: 'link.transfer' });
+    errorReporter.capture(err, { module: 'manager.link' });
   }
 };

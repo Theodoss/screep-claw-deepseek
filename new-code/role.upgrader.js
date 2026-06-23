@@ -2,6 +2,7 @@ const support = require('role.support');
 const sourceSlots = require('manager.rcl1SourceSlots');
 const economy = require('manager.economy');
 const colonyStates = require('config.colonyStates');
+const linkManager = require('manager.link');
 
 function getFallbackSource(creep) {
   return sourceSlots.selectSourceForSupport(creep.room, creep);
@@ -75,10 +76,54 @@ module.exports = {
 
     const economyState = economy.getState(creep.room);
     if (creep.memory.working) {
+      // Link → container fill: if controller container is low and link has energy,
+      // spend one tick refilling the container buffer (lower priority than upgrading,
+      // but prevents upgrade stall when link cooldown or remote flow interrupts).
+      if (!economyState.recovery) {
+        var fillLink = linkManager.getLinkById(linkManager.LINK_IDS.upgrader);
+        var fillContainer = economy.getControllerContainer(creep.room);
+        if (
+          fillLink && fillContainer &&
+          fillLink.store.getUsedCapacity(RESOURCE_ENERGY) >= 100 &&
+          fillContainer.store.getUsedCapacity(RESOURCE_ENERGY) <
+            fillContainer.store.getCapacity(RESOURCE_ENERGY) * 0.5 &&
+          creep.pos.getRangeTo(fillContainer) <= 1 &&
+          creep.pos.getRangeTo(fillLink) <= 3
+        ) {
+          // Withdraw from link first (if creep isn't full)
+          if (creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+            creep.withdraw(fillLink, RESOURCE_ENERGY);
+          }
+          // Then fill container
+          if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+            creep.memory.task = 'fill:controller-container';
+            creep.transfer(fillContainer, RESOURCE_ENERGY);
+          }
+          return;
+        }
+      }
+
       if (economyState.recovery) {
         support.runRecoveryWork(creep);
       } else {
         support.runUpgraderWork(creep);
+      }
+      return;
+    }
+
+    // Priority 1: upgrader link (fastest refill — no walking)
+    var upgraderLink = linkManager.getLinkById(linkManager.LINK_IDS.upgrader);
+    if (
+      !economyState.recovery &&
+      upgraderLink &&
+      upgraderLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      creep.memory.task = 'withdraw:upgrader-link';
+      const linkResult = creep.withdraw(upgraderLink, RESOURCE_ENERGY);
+      if (linkResult === ERR_NOT_IN_RANGE) {
+        creep.moveTo(upgraderLink, {
+          visualizePathStyle: { stroke: '#ffaa00' }
+        });
       }
       return;
     }
