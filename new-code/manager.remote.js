@@ -714,59 +714,70 @@ function buildRemoteMinerBody(energyCapacity) {
 }
 
 function buildRemoteHaulerBody(energyCapacity) {
-  // RCL6 (~2300): 21 CARRY / 22 MOVE = 1050 carry, clears ~10 e/t at D=50
-  if (energyCapacity >= 2200) {
-    return [
-      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-      CARRY, CARRY, CARRY, CARRY, CARRY,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
-    ];
-  }
+  // 2 CARRY : 1 MOVE ratio.  Roads keep speed up; extra MOVE is waste.
+  // Caps: max 24 CARRY, max 12 MOVE.
   if (energyCapacity >= 1800) {
+    // 24 CARRY + 12 MOVE = 1200 cap, 1800 cost, 36 parts, 108 ticks
     return [
       CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
       CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-      CARRY,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-      MOVE, MOVE
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
     ];
   }
   if (energyCapacity >= 1500) {
+    // 20 CARRY + 10 MOVE = 1000 cap, 1500 cost, 30 parts
     return [
       CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE,
+      MOVE, MOVE, MOVE, MOVE, MOVE
     ];
   }
-  if (energyCapacity >= 1300) {
+  if (energyCapacity >= 1200) {
+    // 16 CARRY + 8 MOVE = 800 cap, 1200 cost, 24 parts
     return [
-      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
-    ];
-  }
-  if (energyCapacity >= 800) {
-    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
       CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
       MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
     ];
   }
-  if (energyCapacity >= 600) {
+  if (energyCapacity >= 800) {
+    // 10 CARRY + 5 MOVE = 500 cap, 750 cost, 15 parts
     return [
-      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 600) {
+    // 8 CARRY + 4 MOVE = 400 cap, 600 cost, 12 parts
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE, MOVE
     ];
   }
   if (energyCapacity >= 400) {
+    // 6 CARRY + 3 MOVE = 300 cap, 450 cost, 9 parts
+    return [
+      CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+      MOVE, MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 300) {
+    // 4 CARRY + 2 MOVE = 200 cap, 300 cost, 6 parts
     return [
       CARRY, CARRY, CARRY, CARRY,
-      MOVE, MOVE, MOVE, MOVE
+      MOVE, MOVE
+    ];
+  }
+  if (energyCapacity >= 150) {
+    // 2 CARRY + 1 MOVE = 100 cap, 150 cost, 3 parts
+    return [
+      CARRY, CARRY,
+      MOVE
     ];
   }
   return null;
