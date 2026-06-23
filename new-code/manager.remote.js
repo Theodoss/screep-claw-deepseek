@@ -1042,13 +1042,15 @@ function getSpawnRequests(homeRoomName) {
     if (shouldSpawnPioneers) {
       var builderCount = mission.builderCount || 0;
       var currentPioneers = countCreepsInRole('pioneer', target);
-      // 6×WORK + 3×CARRY + 3×MOVE — 900 energy
+      // 2×WORK + 1×CARRY + 15×MOVE — 1100 energy (swamp full-speed)
       var pioneerBody = [
-        WORK, WORK, WORK, WORK, WORK, WORK,
-        CARRY, CARRY, CARRY,
-        MOVE, MOVE, MOVE
+        WORK, WORK,
+        CARRY,
+        MOVE, MOVE, MOVE, MOVE, MOVE,
+        MOVE, MOVE, MOVE, MOVE, MOVE,
+        MOVE, MOVE, MOVE, MOVE, MOVE
       ];
-      if (currentPioneers < builderCount && homeRoom.energyAvailable >= 900) {
+      if (currentPioneers < builderCount && homeRoom.energyAvailable >= 1100) {
         requests.push({
           role: 'pioneer',
           name: 'pioneer_' + target + '_' + Game.time,
