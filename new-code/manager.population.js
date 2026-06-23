@@ -427,7 +427,7 @@ function getPlan(rcl, context) {
         return 3;
       }()))
     ),
-    rcl1Upgrader: createRole(
+    upgrader: createRole(
       Math.min(4, upgraderWorkTarget >= 18 ? 4 : (upgraderWorkTarget >= 15 ? 3 : (upgraderWorkTarget >= 10 ? 2 : (upgraderWorkTarget > 0 ? 1 : 0)))),
       Math.min(4, Math.max(config.upgraderMax, upgraderWorkTarget >= 18 ? 4 : (upgraderWorkTarget >= 15 ? 3 : 0)))
     ),
