@@ -27,6 +27,25 @@ module.exports = {
 
     // ── Working: build or upgrade ──
     if (creep.memory.working) {
+      var controller = creep.room.controller;
+
+      // Controller emergency: downgrade imminent → upgrade first
+      if (controller &&
+          typeof controller.ticksToDowngrade === 'number' &&
+          controller.ticksToDowngrade < 3000) {
+        var upgradeResult = creep.upgradeController(controller);
+        if (upgradeResult === OK) return;
+        if (upgradeResult === ERR_NOT_IN_RANGE) {
+          creep.moveTo(controller, { reusePath: 20 });
+          return;
+        }
+        if (upgradeResult === ERR_NOT_ENOUGH_RESOURCES) {
+          creep.memory.working = false;
+          return;
+        }
+        return;
+      }
+
       var sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
 
       if (sites.length > 0) {
@@ -54,15 +73,14 @@ module.exports = {
       }
 
       // No construction sites → upgrade controller
-      var controller = creep.room.controller;
       if (controller) {
-        var upgradeResult = creep.upgradeController(controller);
-        if (upgradeResult === OK) return;
-        if (upgradeResult === ERR_NOT_IN_RANGE) {
+        var upgradeResult2 = creep.upgradeController(controller);
+        if (upgradeResult2 === OK) return;
+        if (upgradeResult2 === ERR_NOT_IN_RANGE) {
           creep.moveTo(controller, { reusePath: 20 });
           return;
         }
-        if (upgradeResult === ERR_NOT_ENOUGH_RESOURCES) {
+        if (upgradeResult2 === ERR_NOT_ENOUGH_RESOURCES) {
           creep.memory.working = false;
           return;
         }
