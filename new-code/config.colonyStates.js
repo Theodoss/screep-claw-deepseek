@@ -68,12 +68,13 @@ function isUpgradeSuspended(roomName) {
 }
 
 // Target upgrader WORK count for this room's state.
-// 'save' → 1 (minimal), 'colonize' → return 0, others → return null (let normal logic decide)
+// 'save' → 1, 'colonize' → 1 (minimal, prevent downgrade).
+// Others → return null (let normal logic decide)
 function getUpgraderWorkCap(roomName) {
   var state = getState(roomName);
   if (state === 'save') return 1;
-  if (state === 'colonize') return 0;
-  return null; // no cap, use normal calculation
+  if (state === 'colonize') return 1;
+  return null;
 }
 
 // Should war mode defense overrides be active?

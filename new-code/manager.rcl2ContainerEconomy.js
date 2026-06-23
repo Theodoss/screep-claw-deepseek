@@ -614,9 +614,9 @@ function run(room, state) {
     ? economyState.upgraderWorkTarget || 0
     : 0;
 
-  // Expansion mission: suspend home upgrade to funnel energy to expansion spawn.
-  // Colony state 'colonize'/'save': also suspend/limit upgrade.
-  // Exception: controller emergency (downgrade imminent) → keep minimum upgrade.
+  // Colony state / expansion mission: limit upgrade to funnel energy elsewhere.
+  // Colonize/save: keep 1 minimal upgrader to prevent downgrade.
+  // Exception: controller emergency (downgrade imminent) → keep normal upgrade.
   if (
     colonyStates.isUpgradeSuspended(room.name) ||
     (Memory.expansionMission &&
@@ -625,12 +625,14 @@ function run(room, state) {
      room.name === Memory.expansionMission.home)
   ) {
     if (!economyState.controllerEmergency) {
-      requestedUpgradeWork = 0;
+      var colCap = colonyStates.getUpgraderWorkCap(room.name);
+      if (colCap !== null && colCap > 0) {
+        // Minimal upgrader to prevent downgrade
+        requestedUpgradeWork = colCap;
+      } else {
+        requestedUpgradeWork = 0;
+      }
     }
-  }
-  var colUpgradeCap = colonyStates.getUpgraderWorkCap(room.name);
-  if (colUpgradeCap !== null && requestedUpgradeWork > colUpgradeCap) {
-    requestedUpgradeWork = colUpgradeCap;
   }
 
   const populationPlan = population.getPlan(
