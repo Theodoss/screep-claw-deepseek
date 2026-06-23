@@ -62,6 +62,43 @@
 
 ---
 
+## D009 — W47N22 擴張任務架構
+
+- **時間**: 2026-06-22
+- **原因**: 建立 W47N22 殖民地，由 RCL6 母房 W49N25 支援。需要完整的擴張任務流程取代硬編碼 EXPANSION_TARGETS。
+- **改動範圍**:
+  - **travel.js** — 棄用 findExit+findClosestByPath，改用 moveTo(roomCenter, swampCost:5) 單邊界導航；新增邊界防呆（x/y=0|49 時先推向房中心）；新增反橫跳鎖（A→B→A 偵測，鎖 3 tick）。
+  - **manager.remote.js** — 移除 EXPANSION_TARGETS 硬編碼，改用 Memory.expansionMission 狀態機（claim→build→done）。新增 GCL 守門（GCL 不足不 spawn claimer）。
+  - **Claimer body**: [CLAIM×2, MOVE×10] = 1700e（沼澤滿速）。
+  - **Pioneer body**: [WORK×5, CARRY×4, MOVE×5] = 950e。
+  - **manager.rcl2ContainerEconomy.js** — 擴張期間母房 upgrade 設為 0（controllerEmergency 除外）。
+  - **role.upgrader.js / role.rcl1Upgrader.js** — 擴張 guard：不升級 controller，改把能量送回 spawn/extension。
+  - **清理** — 刪除 nav.flag.js、git rm manager.remote.js.bak。
+- **啟動方式**: 玩家在 Console 設定 `Memory.expansionMission = { active:true, home:'W49N25', targetRoom:'W47N22', signText:'Theodos colony', builderCount:3, phase:'claim' };`
+
+## D008 — 每次部署後 push 到 GitHub
+
+- **時間**: 2026-06-21
+- **原因**: Theodos 要求每次 safe-deploy 後自動 git push，確保程式碼備份到 GitHub。
+- **守則**: 每次執行 `safe-deploy.sh` 後，必須接著 `git push origin master`。
+
+## D007 — 跨房導航統一架構（travel.js）
+
+- **時間**: 2026-06-21
+- **原因**: Claimer 在 W48N21/W48N22 之間來回橫跳，分析後確認是多重問題疊加：
+  1. `creep.pos.roomName` 在跨房瞬間不可靠（crossing tick）
+  2. 每 tick 重算 moveTo，靠近出口時容易左右搖擺
+  3. 無 exit lock，剛跨完房立刻重新規劃路徑
+  4. role 和 travel 混在同一個函數裡，沒有分層
+- **決策**: 建立統一的 `travel.js` 跨房導航層，所有跨房行為以此為準：
+  - **分層架構**: `travel.run()` → `action`。travel 層統一控制移動，action 層不發移動命令。
+  - **Exit lock**: 靠近出口（x/y ≤2 或 ≥47）鎖定 5 ticks，禁止重新規劃。
+  - **Arrival check**: 進入目標房 + 離出口 ≥3 格才算到達（避開 mid-crossing）。
+  - **Flag 輔助**: 支援 `nav-0, nav-1, ...` 旗幟路徑，跨房時先走房間中心再定位。
+  - **State lock**: 儲存在 `creep.memory._t`，狀態一致。
+- **守則**: 任何需要跨房的 creep（claimer、pioneer、remote miner/hauler、builder 等）都必須使用 `travel.js`，不可在 role 層直接 `moveTo(其他房間)`。
+- **對應檔案**: `travel.js`、`role.claimer.js`、`role.pioneer.js`
+
 ## D006 — Branch 隔離：sim 只讀不寫
 
 - **時間**: 2026-06-13
