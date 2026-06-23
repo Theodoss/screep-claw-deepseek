@@ -610,12 +610,9 @@ function run(room, state) {
     repairBacklog: emergencyRepair || generalRepair
   });
   const controllerContainer = economy.getControllerContainer(room);
-  // If no controller container exists (e.g. RCL1-2 room without link/container
-  // layout), still target 1 upgrader — it will fall back to source containers,
-  // spawn/extensions, or direct harvesting.
   var requestedUpgradeWork = controllerContainer
     ? economyState.upgraderWorkTarget || 0
-    : 5;
+    : 0;
 
   // Colony state / expansion mission: limit upgrade to funnel energy elsewhere.
   // ALWAYS keep 1 minimal upgrader to prevent downgrade.
@@ -824,8 +821,16 @@ function run(room, state) {
     return buildWorkerBody(energyCap, role, desiredWork);
   };
 
+  // When no controller container exists (e.g. front-base W47N22), fall back
+  // to RCL1-style harvesters that also upgrade.  This gives upgrade progress
+  // without needing a dedicated upgrader role or controller container.
+  var effectiveHarvesterTarget = fallbackTarget;
+  if (!controllerContainer && effectiveHarvesterTarget < 1) {
+    effectiveHarvesterTarget = 1;
+  }
+
   bootstrap.run(room, {
-    harvesterTarget: fallbackTarget,
+    harvesterTarget: effectiveHarvesterTarget,
     sourceIds: fallbackSourceIds,
     maintainSupport: true,
     builderTarget: builderPolicy.target,

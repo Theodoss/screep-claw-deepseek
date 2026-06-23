@@ -313,6 +313,11 @@ function canUpgrade(room, workParts) {
   const memory = getState(room);
   if (controllerEmergency(room)) return true;
 
+  // Front-base / early-RCL rooms may not have a controller container yet.
+  // Allow harvesters/builders to upgrade directly (they refill from source
+  // containers or harvesting) instead of requiring a dedicated upgrader cycle.
+  if (!getControllerContainer(room)) return true;
+
   const cost = Math.max(1, workParts || 1);
   return (
     (memory.upgraderWorkTarget || 0) > 0 &&
