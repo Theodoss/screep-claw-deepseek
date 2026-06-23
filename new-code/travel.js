@@ -342,15 +342,19 @@ module.exports = {
     }
 
     // ── Arrived? ──
+    // In targetRoom → immediately hand off to role.
+    // Only exception: at absolute edge (x/y=0 or 49) → push inward first.
     if (creep.pos.roomName === targetRoom) {
-      var exitDist = Math.min(
-        creep.pos.x, 49 - creep.pos.x,
-        creep.pos.y, 49 - creep.pos.y
-      );
-      if (exitDist >= 3) {
-        delete mem._t;
-        return false;
+      if (creep.pos.x === 0 || creep.pos.x === 49 ||
+          creep.pos.y === 0 || creep.pos.y === 49) {
+        creep.moveTo(new RoomPosition(25, 25, targetRoom), {
+          reusePath: 3, swampCost: 5,
+          visualizePathStyle: { stroke: '#44cc44', lineStyle: 'dotted' }
+        });
+        return true;
       }
+      delete mem._t;
+      return false;
     }
 
     // ── Determine next route room ──
