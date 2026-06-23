@@ -307,3 +307,57 @@ Game.gcl.level;   // 必須 >= 已擁有房數+1，否則只 hold claimer
 - **對應 SKILL.md 規則**: 先讀高階架構再修改、改動寫入改變文檔、存活優先（向後相容不破壞單 spawn）
 - **教訓**: 「first non-spawning spawn」配合 manager 依序執行，不需共享佇列就能自然分配多 spawn；military 早已用這招，把它抽成共用 util 即可全面套用。
 - **狀態**: 程式已改 + 語法驗證（Claude）。`config.colonies.js`、`util.spawns.js` 為**新檔**，deepseek 部署時務必一起上傳，否則 require 失敗。待 `git pull` 疊上去並部署驗證。
+
+---
+
+## D012 — Invader 機制研究 + remote 防禦改進（Claude 直接修改）
+
+- **時間**: 2026-06-22
+- **背景**: 玩家反映 invader 對經濟傷害大，要求研究機制並改進 remote guard（巡邏/支援）。
+
+### Invader 官方機制（查證自 docs.screeps.com/invaders.html 等）
+1. **觸發**: 每個被採礦的房有隱藏計數器，約累積 **100,000 能量**(+隨機) → 在房間出口生成一隻 invader 獵殺 creep。採越多越頻繁，無法完全避免（只要在採）。
+2. **🔑 reserved 房不生 invader**: invader 只在「**通往中立房的出口**」生成；該房若被 **reserve 或佔領，invader 不會在那裡出現**。→ **持續 reservation = 最便宜的第一道防線**。
+3. **invader 不能跨房移動** → 不需要「追擊」。A 房 invader 不會跑去 B。所謂巡邏＝一隻 guard 輪流覆蓋多房，而非追。
+4. **10% 機率 raid**（2–5 隻含 healer，可能 boost）。
+5. **反覆入侵 = sector 有 Stronghold**：會生 invader，並在中立/reserved 房放 **invader core**（reserve 控制器，擋住採礦直到打掉 core 或它崩解）。
+
+### 改動 A — reservation 強化為第一道防線（`manager.remote.js`）
+- `reserveThreshold`：`max(500, lead+200)` → **`max(1500, lead+400)`**，提早補產、寬裕 margin，讓 reservation 永不歸零（搭配 D010 已加大的 `[CLAIM×2,MOVE×2]` body，每 tick +2 reservation 重建快）。
+- 解除過嚴的 `stable` 限制：新增 `maintainReservation = stable || 有 remoteMiner 在採`。只要該房**正在採礦**就維持 reserve（採礦＝會招 invader＝必須 reserve），不再因暫時 infra 中斷讓 reservation 失效。
+
+### 改動 B — 巡邏 guard（`role.remoteGuard.js` 重寫）
+- **動態 re-target**：每 tick 從 `Memory.remote[home].rooms[*].threat` 找出**最近的有 invader 威脅的房**，自動前往（不再綁死出生 targetRoom）。
+- **即時交戰**：人在某 remote 且當場看到 invader → 立刻打（不等 remoteDefense 每 5 tick 的掃描）。
+- **多房輪巡**：無任何威脅時，在「有啟用 source 的 active remote」之間輪流巡邏（`patrolIdx`，每房停 ~15 tick 再換），提供滾動視野+早期偵測，而非 garrison 單房。只巡 active remote（idle 房不巡，省時）。
+- 戰鬥邏輯（kite melee／優先打 healer／rangedMassAttack／自療）沿用；瀕死(TTL<250)回家換班。
+- 解除對 `manager.remoteDefense` 的 require（改直接讀 Memory threat），降耦合。
+- **dispatch 維持不變**：`manager.remoteDefense` 仍在 invader 威脅時派 guard、並用 garrison-replacement 讓 guard 持續存在 → 第一次接戰後就一直有一隻在巡邏。
+
+### 未做（玩家本輪未選）
+- **invader core 偵測 + 暫停該 remote 經濟**：core 出現時 miner/hauler/reserver 仍會白送、又採不到。**這其實是 invader 對經濟傷害最大的來源，強烈建議下一輪補上。**
+- **Stronghold/core 攻擊隊**：需 dismantle/attack squad + 編隊 AI，大工程。
+
+### 驗證
+- `role.remoteGuard.js / manager.remote.js` `node --check` 通過；remoteGuard 無殘留舊 require。
+- **未做**：實機驗證。建議用 Screeps 房間面板的 "Invasion" 手動生 invader 測試 guard 反應與巡邏。
+
+- **對應 SKILL.md 規則**: 先讀高階架構再修改、改動寫入改變文檔、查 API/機制再設計、存活優先
+- **教訓**: invader 防禦的最大槓桿不是更強的 guard，而是「**保持 reservation**」——reserved 房根本不生 invader；guard 是處理 raid 與 reservation 空窗的補強。invader 不跨房，所以「巡邏」是覆蓋而非追擊。
+- **狀態**: 程式已改 + 語法驗證（Claude）。待 `git pull` 疊上去並部署驗證。建議下一輪做 invader core 偵測。
+
+### 修正（同批，玩家回報兩個 bug）
+1. **remote hauler 撤回母房後永久發呆、invader 死了也不回**：根因＝`isRemotePaused` 卡在 `remoteConfig.threat`，而 `threat` 只在 **有視野** 時（`scanRemoteRoom`）才清；所有 creep 一撤就沒視野 → threat 永遠清不掉 → 永久暫停。**死鎖。**
+   - 修：`manager.remoteDefense.run()` 加 **無視野 timeout**——`threat` 超過 `THREAT_TIMEOUT=300` tick 未被重新確認就自動清除。
+   - 另：`DANGER_PAUSE_TICKS` 800→**400**，guard 清掉 invader 後經濟更快恢復。
+2. **remote guard 一直在邊界來回進出**：根因＝guard 進威脅房時落在**出口 tile**(x/y=0|49)，沒敵人時不下移動指令；站出口 tile 的 creep 下一 tick 被遊戲自動拉回隔壁房 → 再進 → 無限橫跳（與 D007 同類，guard 的 `moveToRoom` 無邊界防呆）。
+   - 修：guard 重寫改用 **`travel.js`** 做跨房移動（內建 D007 邊界防呆＋反橫跳＋沼澤），且抵達後一律停在**離邊界 ≥3 格**（`inRoomOffEdge`）才轉入 hold/fight；`fleeStep` 也改為不踏上邊緣 tile（1–48）。無威脅時 hold 在房內中央給視野，讓 threat 能正常清除（也順帶解死鎖）。
+   - 移除 guard 對 `manager.remoteDefense` 的 require，改讀 Memory threat。
+### 修正 2（玩家實測數據後的真正根因）
+玩家提供 live Memory：W48N25 `threat` 已不在、`sources[].enabled` 皆 true、房內 0 hostile——**之前兩個推測（threat 死鎖／disabled source）都被否定**。真正卡住的是 **`status:'danger'` + `pauseUntil`**：`getSpawnRequests` 對 `isRemotePaused` 的房一開頭就 `continue` → 暫停期間**完全不生 miner/hauler/reserver**（玩家點出的「沒 miner 也不補 miner」正是此症狀）。舊的 `pauseUntil` 是「沒有 guard 年代」用固定時間賭 invader 走了的權宜。
+- **修（`updateRemoteRoom`）**: danger 暫停改為**視野確認制**——房間有視野且 0 hostile 連續 `RESUME_CLEAR_TICKS=10` tick 就恢復，不再傻等固定 timer。
+- **guard 把關（玩家要求，為擴張考量）**: 快速恢復**只在該 colony 有存活 remoteGuard 時**生效（`hasRemoteGuardForHome`，per-home 可擴張）——有 guard 罩著才取消等待；**沒 guard 仍走固定 `pauseUntil`（800→400）** 後門，避免在無人保護下樂觀恢復又把採礦 creep 送死。
+- 立即解卡（玩家 console，對現存卡住的房）：`Memory.remote['W49N25'].rooms['W48N25'].status='active'; delete Memory.remote['W49N25'].rooms['W48N25'].clearStreak;`
+
+- **驗證**: `role.remoteGuard.js / manager.remoteDefense.js / manager.remote.js` `node --check` 通過。
+- **教訓**: ① 別急著下根因——玩家的 live 數據推翻了我兩個假設；先看狀態再修。② 「撤退式防禦」的狀態清除若**依賴視野**會死鎖（撤光＝沒人解警報），要有 timeout 後門。③ 出口 tile(0/49) 會被遊戲自動推回隔壁房，「停在房內」邏輯必須先離開邊界 ≥3 格。④ 暫停/恢復這種「賭時間」的權宜，有了主動單位（guard）後應改成「**確認制 + 有保護才放行**」。

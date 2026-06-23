@@ -7,6 +7,9 @@ const MAX_GUARDS_GLOBAL = 2;      // never more than 2 remoteGuards across all r
 const MAX_GUARDS_PER_ROOM = 1;    // never more than 1 guard per remote room
 const REPLACEMENT_TTL = 300;      // dispatch replacement when garrisoned guard TTL < this
 const DETECT_INTERVAL = 5;        // check remote rooms every 5 ticks
+const THREAT_TIMEOUT = 300;       // expire a threat we haven't re-confirmed for this long
+                                  // (no vision → scanRemoteRoom can't clear it; this
+                                  // backstop prevents permanent pause / stuck haulers)
 
 function getHomeConfig() {
   if (!Memory.remote || !Memory.remote[HOME_ROOM]) return null;
@@ -236,6 +239,22 @@ function run() {
   for (const roomName in homeConfig.rooms) {
     const remoteConfig = homeConfig.rooms[roomName];
     scanRemoteRoom(roomName, remoteConfig);
+
+    // Vision-independent safety net: if a threat hasn't been re-confirmed
+    // for THREAT_TIMEOUT ticks (everyone retreated → no vision → scan can't
+    // see it to clear it), expire it. Without this the threat — and thus the
+    // remote pause — persists forever and haulers/miners never return.
+    if (remoteConfig && remoteConfig.threat) {
+      const lastSeen = remoteConfig.threat.lastSeen ||
+        remoteConfig.threat.since || 0;
+      if (Game.time - lastSeen > THREAT_TIMEOUT) {
+        delete remoteConfig.threat;
+        console.log(
+          '[defense] threat in ' + roomName +
+          ' expired after ' + THREAT_TIMEOUT + ' ticks without vision'
+        );
+      }
+    }
   }
 }
 

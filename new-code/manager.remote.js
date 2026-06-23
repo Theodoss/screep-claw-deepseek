@@ -1,6 +1,14 @@
 const HOME_ROOM = 'W49N25';
 const REMOTE_ROOM = 'W49N26';
-const DANGER_PAUSE_TICKS = 800;
+const DANGER_PAUSE_TICKS = 400;   // BLIND fallback only: if we have no vision
+                                  // of a paused remote, resume after this long.
+                                  // When we DO have vision (a guard holding the
+                                  // room), we resume immediately on confirmed
+                                  // clear instead — see RESUME_CLEAR_TICKS.
+const RESUME_CLEAR_TICKS = 10;    // vision-confirmed clear ticks before resuming
+                                  // a danger-paused remote. Now that an active
+                                  // guard clears + holds the room, there's no
+                                  // need to wait out a fixed timer (DECISIONS D012).
 const REMOTE_STABLE_TICKS = 100;
 const TOWER_LOW_ENERGY = 400;
 const REMOTE_ROAD_SITE_INTERVAL = 25;
@@ -475,6 +483,24 @@ function resolveSourceId(sourceConfig) {
   return sourceConfig.id;
 }
 
+// Is there a live remoteGuard belonging to this colony? Only then is it safe
+// to skip the danger-pause wait on a confirmed-clear remote — the guard is
+// there to protect returning miners/haulers. Per-home so it scales as we add
+// colonies (DECISIONS D012 expansion follow-up).
+function hasRemoteGuardForHome(homeRoomName) {
+  for (const name in Game.creeps) {
+    const creep = Game.creeps[name];
+    if (
+      creep.memory.role === 'remoteGuard' &&
+      (creep.memory.homeRoom === homeRoomName ||
+        creep.memory.home === homeRoomName)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function updateRemoteRoom(homeRoomName, remoteRoomName, remoteConfig) {
   const room = Game.rooms[remoteRoomName];
   if (!remoteConfig) return;
@@ -495,17 +521,31 @@ function updateRemoteRoom(homeRoomName, remoteRoomName, remoteConfig) {
     remoteConfig.status = 'danger';
     remoteConfig.pauseUntil = Game.time + DANGER_PAUSE_TICKS;
     remoteConfig.stableSince = 0;
+    remoteConfig.clearStreak = 0;
     if (stateChanged) {
       console.log(
         `[remote] danger detected ${remoteRoomName}; paused until ` +
         remoteConfig.pauseUntil
       );
     }
-  } else if ((remoteConfig.pauseUntil || 0) <= Game.time) {
-    const stateChanged = remoteConfig.status !== 'active';
-    remoteConfig.status = 'active';
-    if (stateChanged) {
-      console.log(`[remote] resumed ${remoteRoomName}`);
+  } else if (remoteConfig.status === 'danger') {
+    // Room is IN VIEW and clear. Fast-resume ONLY if a guard exists for this
+    // colony — the guard clears + holds the room and protects returning
+    // miners/haulers, so there's no need to wait out the fixed blackout. With
+    // NO guard, fall back to the fixed pauseUntil timer (don't optimistically
+    // resume into a room nothing is protecting).
+    remoteConfig.clearStreak = (remoteConfig.clearStreak || 0) + 1;
+    const guardAvailable = hasRemoteGuardForHome(homeRoomName);
+    const fastResume =
+      guardAvailable && remoteConfig.clearStreak >= RESUME_CLEAR_TICKS;
+    const timerResume = (remoteConfig.pauseUntil || 0) <= Game.time;
+    if (fastResume || timerResume) {
+      remoteConfig.status = 'active';
+      remoteConfig.clearStreak = 0;
+      console.log(
+        `[remote] resumed ${remoteRoomName}` +
+        (fastResume ? ' (guard-confirmed clear)' : ' (pause expired)')
+      );
     }
   }
 
@@ -1152,9 +1192,11 @@ function getSpawnRequests(homeRoomName) {
     const reserverLead = reserverBody
       ? getReserverLeadTicks(homeRoomName, remoteRoomName, reserverBody)
       : 0;
-    // Spawn when reservation would run out before a new reserver arrives.
-    // Guard: at least 500 tick threshold so we don't chase tiny margins.
-    const reserveThreshold = Math.max(500, reserverLead + 200);
+    // Reservation is our FIRST line of invader defense: NPC invaders only
+    // spawn at exits to neutral rooms, so a continuously-reserved remote
+    // never spawns them (DECISIONS D012). React early with a wide margin so
+    // reservation never lapses to 0 between reserver deaths + travel time.
+    const reserveThreshold = Math.max(1500, reserverLead + 400);
     const reservationLow = !!(
       controller &&
       (
@@ -1169,9 +1211,18 @@ function getSpawnRequests(homeRoomName) {
     );
     // Healthy if alive long enough to travel + stay a while
     const reserverReplacementLead = reserverLead + 300;
+    // Maintain reservation whenever we're actively mining here (a miner is
+    // assigned) — not only when the full container economy is "stable". A
+    // transient infra dip must not let reservation lapse and invite invaders.
+    const reserveMiners = getAssignedCreeps(
+      'remoteMiner',
+      homeRoomName,
+      remoteRoomName
+    );
+    const maintainReservation = stable || reserveMiners.length > 0;
     if (
       reserverBody &&
-      stable &&
+      maintainReservation &&
       controller &&
       reservationLow &&
       !hasHealthyAssignedCreep(reservers, reserverReplacementLead)
