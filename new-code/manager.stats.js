@@ -78,6 +78,10 @@ function recordEnergySnapshots() {
   }
 }
 
+function isUpgraderRole(role) {
+  return role === 'upgrader' || role === 'rcl1Upgrader';
+}
+
 module.exports = {
   collect: function () {
     var previousSnapshots = Memory.agent && Memory.agent.energySnapshots;
@@ -136,7 +140,7 @@ module.exports = {
       for (const creep of creeps) {
         const role = creep.memory.role || 'unknown';
         roleCounts[role] = (roleCounts[role] || 0) + 1;
-        if (role === 'upgrader') {
+        if (isUpgraderRole(role)) {
           upgraderCount++;
           upgraderWork += creep.getActiveBodyparts(WORK);
         }
@@ -238,10 +242,15 @@ module.exports = {
       const populationState = {};
       const policyRoles = {};
       for (const role in fallbackPlan.roles) policyRoles[role] = true;
-      for (const role in roleCounts) policyRoles[role] = true;
+      for (const role in roleCounts) {
+        if (role === 'rcl1Upgrader') continue;
+        policyRoles[role] = true;
+      }
 
       for (const role in policyRoles) {
-        const count = roleCounts[role] || 0;
+        const count = role === 'upgrader'
+          ? (roleCounts.upgrader || 0) + (roleCounts.rcl1Upgrader || 0)
+          : roleCounts[role] || 0;
         const fallbackRole = population.getRole(fallbackPlan, role);
         const target = roleTargets[role] === undefined
           ? fallbackRole.target

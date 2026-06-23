@@ -2,6 +2,7 @@ const rcl1Bootstrap = require('manager.rcl1Bootstrap');
 const rcl2ContainerEconomy = require('manager.rcl2ContainerEconomy');
 const roleRcl1Harvester = require('role.rcl1Harvester');
 const roleUpgrader = require('role.upgrader');
+const roleRcl1Upgrader = require('role.rcl1Upgrader');
 const roleRcl1Builder = require('role.rcl1Builder');
 const roleRcl2Miner = require('role.rcl2Miner');
 const roleRcl2Hauler = require('role.rcl2Hauler');
@@ -34,13 +35,13 @@ const ROOM_PLANNER_ACTIVATION_VERSION = 1;
 
 const LEGACY_ROLES = {
   harvester: 'rcl1Harvester',
-  builder: 'rcl1Builder',
-  rcl1Upgrader: 'upgrader'
+  builder: 'rcl1Builder'
 };
 
 const ROLE_MODULES = {
   rcl1Harvester: roleRcl1Harvester,
   upgrader: roleUpgrader,
+  rcl1Upgrader: roleRcl1Upgrader,
   rcl1Builder: roleRcl1Builder,
   rcl2Miner: roleRcl2Miner,
   rcl2Hauler: roleRcl2Hauler,
@@ -111,6 +112,43 @@ function activateRoomPlanner(roomName) {
     ROOM_PLANNER_ACTIVATION_VERSION;
 }
 
+function getCreepHomeRoom(creep) {
+  var homeRoomName = creep.memory.home || creep.memory.homeRoom;
+  return homeRoomName && Game.rooms[homeRoomName]
+    ? Game.rooms[homeRoomName]
+    : creep.room;
+}
+
+function getCreepHomeRcl(creep) {
+  var homeRoom = getCreepHomeRoom(creep);
+  return homeRoom && homeRoom.controller
+    ? homeRoom.controller.level
+    : null;
+}
+
+function normalizeUpgraderRole(creep) {
+  if (
+    creep.memory.role !== 'upgrader' &&
+    creep.memory.role !== 'rcl1Upgrader'
+  ) {
+    return;
+  }
+
+  var rcl = getCreepHomeRcl(creep);
+  if (!rcl) return;
+
+  var expectedRole = rcl <= 2 ? 'rcl1Upgrader' : 'upgrader';
+  if (creep.memory.role !== expectedRole) {
+    creep.memory.role = expectedRole;
+  }
+}
+
+function getProfileRoleName(creep) {
+  var role = creep.memory.role || 'unknown';
+  var rcl = getCreepHomeRcl(creep);
+  return rcl ? role + '@rcl' + rcl : role + '@unknownRcl';
+}
+
 module.exports.loop = function () {
   cpuProfiler.begin();
 
@@ -142,6 +180,7 @@ module.exports.loop = function () {
       if (LEGACY_ROLES[creep.memory.role]) {
         creep.memory.role = LEGACY_ROLES[creep.memory.role];
       }
+      normalizeUpgraderRole(creep);
     }
   });
 
@@ -309,7 +348,7 @@ module.exports.loop = function () {
       const roleModule = ROLE_MODULES[creep.memory.role];
       if (roleModule) {
         cpuProfiler.measureRole(
-          creep.memory.role || 'unknown',
+          getProfileRoleName(creep),
           creep.room.name,
           creep.name,
           function () {

@@ -4,6 +4,10 @@ const population = require('manager.population');
 
 const BASIC_BODY = [WORK, CARRY, MOVE];
 const UPGRADER_REPLACEMENT_BUFFER = 10;
+const UPGRADER_ROLES = {
+  upgrader: true,
+  rcl1Upgrader: true
+};
 
 function countRole(creeps, role) {
   let count = 0;
@@ -32,6 +36,16 @@ function getHomeCreeps(room) {
   return creeps;
 }
 
+function isUpgraderRole(role) {
+  return !!UPGRADER_ROLES[role];
+}
+
+function getSpawnedUpgraderRole(room) {
+  return room.controller && room.controller.level <= 2
+    ? 'rcl1Upgrader'
+    : 'upgrader';
+}
+
 function getUpgraderState(creeps, spawn, room) {
   let count = 0;
   let healthyWork = 0;
@@ -41,7 +55,7 @@ function getUpgraderState(creeps, spawn, room) {
     : 0;
 
   for (const creep of creeps) {
-    if (creep.memory.role !== 'upgrader') continue;
+    if (!isUpgraderRole(creep.memory.role)) continue;
 
     count++;
     const work = creep.getActiveBodyparts(WORK);
@@ -257,6 +271,8 @@ function run(room, options) {
   // we automatically scale up to bigger bodies.
   const energyCapacity = room.energyAvailable;
   const bodyBuilder = settings.bodyBuilder || null;
+  const spawnedUpgraderRole = settings.upgraderRole ||
+    getSpawnedUpgraderRole(room);
   const buildBody = (role, desiredWork) => {
     if (bodyBuilder) {
       return bodyBuilder(energyCapacity, role, desiredWork);
@@ -348,9 +364,9 @@ function run(room, options) {
   ) {
     trySpawn(
       spawn,
-      'upgrader',
+      spawnedUpgraderRole,
       buildBody(
-        'upgrader',
+        spawnedUpgraderRole,
         upgraderWorkTarget - upgraders.healthyWork
       ),
       sourceIds
