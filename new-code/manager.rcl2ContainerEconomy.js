@@ -840,17 +840,17 @@ function run(room, state) {
   // must actually contain the energy.  Remote economy spawning (miners,
   // haulers, guards) runs earlier in the tick → big upgrader only spawns
   // when other needs are met.
-  // storedEnergy > 100k → 80% cap  (max ~1840e,  16 WORK at RCL6)
-  // storedEnergy >  50k → 65% cap  (max ~1495e,  13 WORK at RCL6)
-  // otherwise           → 50% cap  (current behaviour, safe floor)
+  // storedEnergy > 150k → 70% cap  (max ~1610e,  14 WORK at RCL6)
+  // storedEnergy >  75k → 60% cap  (max ~1380e,  11 WORK at RCL6)
+  // otherwise           → 50% cap  (original safe floor, proven stable)
   // Floor of 300 ensures a minimum [W,C×2,M×2] body is possible.
   const upgraderBodyBuilder = function (energyCap, role, desiredWork) {
     if (role === 'upgrader') {
-      var capRatio = 0.50; // safe default
+      var capRatio = 0.50; // safe default (original behaviour)
       var stored = economyState.storedEnergy;
       if (typeof stored === 'number') {
-        if (stored > 100000) capRatio = 0.80;
-        else if (stored > 50000) capRatio = 0.65;
+        if (stored > 150000) capRatio = 0.70;
+        else if (stored > 75000) capRatio = 0.60;
       }
       var cappedEnergy = Math.floor(room.energyCapacityAvailable * capRatio);
       if (cappedEnergy < 300) cappedEnergy = 300;
