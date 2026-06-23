@@ -23,12 +23,12 @@ const REMOTE_ROOMS = {
     { id: null, x: 23, y: 25, roomName: 'W49N26', containerX: 23, containerY: 24, enabled: true }
   ],
   W48N25: [
-    { id: null, x: 29, y: 23, roomName: 'W48N25', containerX: 28, containerY: 22, enabled: false },
-    { id: null, x: 41, y: 3, roomName: 'W48N25', containerX: 42, containerY: 3, enabled: false }
+    { id: null, x: 29, y: 23, roomName: 'W48N25', containerX: 28, containerY: 22, enabled: true },
+    { id: null, x: 41, y: 3, roomName: 'W48N25', containerX: 42, containerY: 3, enabled: true }
   ],
   W48N26: [
-    { id: null, x: 12, y: 38, roomName: 'W48N26', containerX: 11, containerY: 38, enabled: false },
-    { id: null, x: 41, y: 39, roomName: 'W48N26', containerX: 40, containerY: 38, enabled: false }
+    { id: null, x: 12, y: 38, roomName: 'W48N26', containerX: 11, containerY: 38, enabled: true },
+    { id: null, x: 41, y: 39, roomName: 'W48N26', containerX: 40, containerY: 38, enabled: true }
   ]
 };
 
@@ -112,6 +112,18 @@ function initMemory() {
         remoteConfig.sources[index],
         defaults[index]
       ) || changed;
+
+      // Migration: if config default switched from false→true, force-enable
+      // in runtime memory.  fillSourceMissing won't overwrite an existing
+      // false value (fillMissing checks != null).
+      if (
+        defaults[index] &&
+        defaults[index].enabled === true &&
+        remoteConfig.sources[index].enabled !== true
+      ) {
+        remoteConfig.sources[index].enabled = true;
+        changed = true;
+      }
     }
   }
 
