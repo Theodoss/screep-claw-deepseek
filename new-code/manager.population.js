@@ -428,8 +428,8 @@ function getPlan(rcl, context) {
       }()))
     ),
     upgrader: createRole(
-      Math.min(4, upgraderWorkTarget >= 18 ? 4 : (upgraderWorkTarget >= 15 ? 3 : (upgraderWorkTarget >= 10 ? 2 : (upgraderWorkTarget > 0 ? 1 : 0)))),
-      Math.min(4, Math.max(config.upgraderMax, upgraderWorkTarget >= 18 ? 4 : (upgraderWorkTarget >= 15 ? 3 : 0)))
+      Math.min(2, upgraderWorkTarget >= 15 ? 2 : (upgraderWorkTarget >= 10 ? 2 : (upgraderWorkTarget > 0 ? 1 : 0))),
+      Math.min(2, Math.max(config.upgraderMax, upgraderWorkTarget >= 15 ? 2 : 0))
     ),
     guard: createRole(
       input.hostilesCount > 0 ? config.guardMax : 0,
