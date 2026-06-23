@@ -1,6 +1,7 @@
 const sourceSlots = require('manager.rcl1SourceSlots');
 const support = require('role.support');
 const population = require('manager.population');
+const spawnUtil = require('util.spawns');
 
 const BASIC_BODY = [WORK, CARRY, MOVE];
 const UPGRADER_REPLACEMENT_BUFFER = 10;
@@ -138,8 +139,8 @@ function run(room, options) {
   const spawns = room.find(FIND_MY_SPAWNS);
   if (spawns.length === 0) return false;
 
-  const spawn = spawns[0];
-  if (spawn.spawning) return false;
+  const spawn = spawnUtil.getAvailableSpawn(room);
+  if (!spawn) return false;
 
   const creeps = room.find(FIND_MY_CREEPS);
   const sourceIds = settings.sourceIds;

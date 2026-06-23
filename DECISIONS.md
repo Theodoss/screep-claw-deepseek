@@ -206,3 +206,67 @@ Game.gcl.level;   // 必須 >= 已擁有房數+1，否則只 hold claimer
 - **對應 SKILL.md 規則**: 存活優先、先讀高階架構再修改、改動寫入改變文檔
 - **教訓**: 規劃文檔（D007/D008）與實際 code 會脫節；review 時務必 grep 驗證「規劃是否已落地」，別假設文檔=現況。
 - **狀態**: A1/A2 程式已改 + 語法驗證（Claude）。A3 部分待玩家本機 git 收尾。實機驗證待部署。
+- **合併備註（2026-06-22）**: 推送時發現 EC2 agent 的 `fee15bf` 已**獨立實作了相同的 D007/D008**（travel 沼澤修正、expansionMission 狀態機、停母房 upgrade），寫法不同但功能等價。rebase 時 5 個檔案衝突，決議**全部採用 agent 版（`--ours`）**，保留 Claude 的清理（刪 nav.flag.js/.bak）與文檔。教訓：分析前務必先 `git pull` 確認最新（見 D011 起點）。
+
+---
+
+## D010 — 殖民地表 + remote 多項優化（Claude 直接修改）
+
+- **時間**: 2026-06-22
+- **背景**: 玩家要求全面架構優化、為擴張做底層準備，並點名三個問題。基於 rebase 後的 agent 版（含 D007/D008）續改。**deepseek 推送前務必先 `git pull` 疊最新。**
+
+### (1) 殖民地表 config.colonies.js（B1 地基）
+- 新增 `new-code/config.colonies.js`：單一真相來源，宣告每個 home 殖民地 + 其 remote 房 source 設定（+ 預留 expansion 欄位）。helper：`listHomeRooms / getColony / getRemoteRooms / getDefaultSources / getHomeForRemote`。
+- 重構 `manager.remote.js`：
+  - 移除硬編碼 `REMOTE_ROOMS` 常數，資料移到 config。
+  - `getDefaultSources(home, remote)` 改讀 config（新增 home 參數）。
+  - `initMemory(homeRoomName)` 改為單一 home 參數化、source 從 config 取。
+  - `run()` 改為 **迭代 `colonies.listHomeRooms()`**：每個 home 各自管理 remote 房、從自己的 spawn 產兵 → 多殖民地 ready。`HOME_ROOM` 常數僅留作向後相容匯出（= 第一個 colony）。
+  - 之後 claim W47N22 並蓋好 spawn，只需在 config.colonies 加一筆，remote 系統自動接管（不必改 code）。
+- **未動（留待後續）**: B2 單一 spawn `spawns[0]`（main.js defense 區塊、各 manager）；main.js / manager.remoteDefense 仍硬編碼 'W49N25'。下一輪處理。
+
+### (2) 加大 reserver body（remote reserve 太小）
+- `buildReserverBody`：cap≥1300 → `[CLAIM×2, MOVE×2]`（cap<1300 維持 `[CLAIM, MOVE]`）。每 CLAIM +1 reservation/tick；2 CLAIM 倍增、能更快重建/守住 5000 上限並涵蓋 CLAIM creep ~600 tick 壽命 + 路程的補位空窗。MOVE 1:1 保滿速。
+
+### (3) remoteHauler 優先撿散落 energy
+- `role.remoteHauler.js`：新增 `selectDroppedEnergy()`（找 container 半徑 3 內最大的地面 RESOURCE_ENERGY）；在 `collect()` 中把它排在 **withdraw container 之前**。地面 energy 每 tick 衰減 1，container 不衰減 → 先撿地面避免浪費（container 滿溢、miner 沒站準時的掉落）。
+
+### 驗證
+- `config.colonies.js / manager.remote.js / role.remoteHauler.js` 三檔 `node --check` 全通過；無殘留 `REMOTE_ROOMS`。
+- **未做**：實機 sim 驗證（無法部署）。建議部署後觀察 reserver reservation 是否更穩、remote 房地面 energy 是否被即時撿走。
+
+- **對應 SKILL.md 規則**: 先讀高階架構再修改、改動寫入改變文檔、為擴張做準備
+- **教訓**: 既有 remote 函式多數已用 homeRoomName 參數化，所以多殖民地化的成本主要在「資料外移 + run() 迭代」，而非大改邏輯；中央化設定表是低風險、高槓桿的擴張地基。
+- **狀態**: 程式已改 + 語法驗證（Claude）。待 deepseek `git pull` 後疊上去並部署驗證。
+
+---
+
+## D011 — 多 spawn 並行（B2，Claude 直接修改）
+
+- **時間**: 2026-06-22
+- **背景**: review B2——`spawns[0]` 假設遍布全 code，RCL7=2 spawn、RCL8=3 spawn 時只用第一個 → 產兵吞吐瓶頸，正卡在「長征衝產量」階段。
+
+### 改動
+- 新增 `new-code/util.spawns.js`：`getAvailableSpawn(room)` = 第一個 `!spawning` 的 spawn（全忙回 null）；`getSpawns(room)`。
+- 將「spawn 決策點」由 `spawns[0] + if(spawn.spawning) return` 改為 `getAvailableSpawn`：
+  - `manager.rcl2ContainerEconomy.run()`（主經濟產兵）
+  - `manager.rcl1Bootstrap.run()`（bootstrap 後備產兵）
+  - `manager.remote.run()`（remote 產兵）+ `isHomeEconomyStable`（改成「需有一個空 spawn」而非「spawn#0 不忙」）
+  - `main.js` defense 區塊
+- `manager.military.trySpawn` 本來就用 `spawns.find(!spawning)`（已正確），維持不動。
+
+### 原理
+- 每 tick 產兵的 manager 依序執行（remote → defense → 各房經濟 → military）。`spawnCreep` 成功的瞬間該 spawn 變 `.spawning`，所以下一個 caller 的 `getAvailableSpawn` 自然拿到下一個空 spawn → **多 spawn 平行**。單一 spawn 房行為不變（完全向後相容）。
+
+### 未動（刻意保留）
+- 其餘 `spawns[0]` 都是**非產兵**的位置/身分用途，維持正確：`manager.rcl1SourceSlots`(home spawn 參照)、`rcl2ContainerEconomy.discoverSources`(距離計算)、`manager.remote.getHomeSpawn`(remote road 起點)、`role.guard`(駐點)、`role.remoteHauler.waitAtHome`(等待點)、`planner.roomPlanner`(停用)、`manager.spawn.js`(legacy 未載入)。
+- **單一 manager 內仍只產一隻/tick**（如 economy 一個 tick 仍只 spawn 一隻 miner/hauler）。要讓單一 manager 一 tick 餵滿多個 spawn 需把其決策樹改成迴圈——風險較高，留待後續。現階段的「跨 manager 平行」已是主要收益。
+- main.js / manager.remoteDefense 仍硬編碼 `'W49N25'`：等 colony table（D010）擴到第二殖民地時再一起多殖民地化。
+
+### 驗證
+- `util.spawns.js / main.js / manager.rcl1Bootstrap.js / manager.rcl2ContainerEconomy.js / manager.remote.js` 全 `node --check` 通過；spawn 決策路徑已無 `spawns[0]`。
+- **未做**：實機驗證（無法部署）。建議 RCL7 後觀察兩個 spawn 是否同 tick 並行產兵。
+
+- **對應 SKILL.md 規則**: 先讀高階架構再修改、改動寫入改變文檔、存活優先（向後相容不破壞單 spawn）
+- **教訓**: 「first non-spawning spawn」配合 manager 依序執行，不需共享佇列就能自然分配多 spawn；military 早已用這招，把它抽成共用 util 即可全面套用。
+- **狀態**: 程式已改 + 語法驗證（Claude）。`config.colonies.js`、`util.spawns.js` 為**新檔**，deepseek 部署時務必一起上傳，否則 require 失敗。待 `git pull` 疊上去並部署驗證。

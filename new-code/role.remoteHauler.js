@@ -159,6 +159,34 @@ function selectNearbySalvage(creep, sourceConfig) {
   return null;
 }
 
+// Dropped energy near the source/container decays at 1/tick (miner overflow
+// when the container is full, or drops when the miner can't reach the
+// container tile). Grab the biggest such pile FIRST — before the
+// non-decaying container — so it isn't lost. Range 3 covers the miner tile
+// plus the ring of tiles overflow lands on.
+function selectDroppedEnergy(creep, sourceConfig) {
+  const dropped = creep.room.find(FIND_DROPPED_RESOURCES);
+  let best = null;
+
+  for (let index = 0; index < dropped.length; index++) {
+    const resource = dropped[index];
+    if (resource.resourceType !== RESOURCE_ENERGY) continue;
+    if (
+      resource.pos.getRangeTo(
+        sourceConfig.containerX,
+        sourceConfig.containerY
+      ) > 3
+    ) {
+      continue;
+    }
+    if (!best || resource.amount > best.amount) {
+      best = resource;
+    }
+  }
+
+  return best;
+}
+
 function collect(creep, sourceConfig) {
   var containerX = sourceConfig.containerX;
   var containerY = sourceConfig.containerY;
@@ -198,6 +226,15 @@ function collect(creep, sourceConfig) {
     creep.moveTo(remote.getWaitPosition(sourceConfig), {
       reusePath: 5
     });
+    return;
+  }
+
+  // Priority: decaying ground energy before the (non-decaying) container.
+  const groundEnergy = selectDroppedEnergy(creep, sourceConfig);
+  if (groundEnergy) {
+    if (creep.pickup(groundEnergy) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(groundEnergy, { reusePath: 5 });
+    }
     return;
   }
 

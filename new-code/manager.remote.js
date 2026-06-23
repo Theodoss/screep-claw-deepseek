@@ -1,4 +1,11 @@
-const HOME_ROOM = 'W49N25';
+const colonies = require('config.colonies');
+const spawnUtil = require('util.spawns');
+
+// HOME_ROOM / REMOTE_ROOM are kept only for backward-compatible exports.
+// The authoritative colony + remote-room data now lives in
+// config.colonies.js (DECISIONS D010). run() iterates every home room
+// declared there, so adding a colony is a config edit — not a code change.
+const HOME_ROOM = colonies.listHomeRooms()[0] || 'W49N25';
 const REMOTE_ROOM = 'W49N26';
 const DANGER_PAUSE_TICKS = 800;
 const REMOTE_STABLE_TICKS = 100;
@@ -6,26 +13,8 @@ const TOWER_LOW_ENERGY = 400;
 const REMOTE_ROAD_SITE_INTERVAL = 25;
 const REMOTE_ROAD_MAX_ACTIVE_SITES = 3;
 
-// Each remote room has its own source list.  x/y = source position,
-// containerX/Y = where the container should go (adjacent non-wall tile).
-// Sources and containers are discovered on first creep entry.
-const REMOTE_ROOMS = {
-  W49N26: [
-    { id: null, x: 16, y: 26, roomName: 'W49N26', containerX: 16, containerY: 25, enabled: true },
-    { id: null, x: 23, y: 25, roomName: 'W49N26', containerX: 23, containerY: 24, enabled: true }
-  ],
-  W48N25: [
-    { id: null, x: 29, y: 23, roomName: 'W48N25', containerX: 28, containerY: 22, enabled: false },
-    { id: null, x: 41, y: 3, roomName: 'W48N25', containerX: 42, containerY: 3, enabled: false }
-  ],
-  W48N26: [
-    { id: null, x: 12, y: 38, roomName: 'W48N26', containerX: 11, containerY: 38, enabled: false },
-    { id: null, x: 41, y: 39, roomName: 'W48N26', containerX: 40, containerY: 38, enabled: false }
-  ]
-};
-
-function getDefaultSources(roomName) {
-  return REMOTE_ROOMS[roomName] || [];
+function getDefaultSources(homeRoomName, remoteRoomName) {
+  return colonies.getDefaultSources(homeRoomName, remoteRoomName);
 }
 
 function fillMissing(target, key, value) {
@@ -48,7 +37,8 @@ function fillSourceMissing(source, defaults) {
   return changed;
 }
 
-function initMemory() {
+function initMemory(homeRoomName) {
+  const homeName = homeRoomName || HOME_ROOM;
   let changed = false;
 
   if (!Memory.remote || typeof Memory.remote !== 'object') {
@@ -56,22 +46,23 @@ function initMemory() {
     changed = true;
   }
   if (
-    !Memory.remote[HOME_ROOM] ||
-    typeof Memory.remote[HOME_ROOM] !== 'object'
+    !Memory.remote[homeName] ||
+    typeof Memory.remote[homeName] !== 'object'
   ) {
-    Memory.remote[HOME_ROOM] = {};
+    Memory.remote[homeName] = {};
     changed = true;
   }
 
-  const homeConfig = Memory.remote[HOME_ROOM];
+  const homeConfig = Memory.remote[homeName];
   changed = fillMissing(homeConfig, 'enabled', true) || changed;
   if (!homeConfig.rooms || typeof homeConfig.rooms !== 'object') {
     homeConfig.rooms = {};
     changed = true;
   }
 
-  // Initialize every configured remote room
-  for (const roomName in REMOTE_ROOMS) {
+  // Initialize every configured remote room for this home (colony table)
+  const remoteRooms = colonies.getRemoteRooms(homeName);
+  for (const roomName in remoteRooms) {
     if (
       !homeConfig.rooms[roomName] ||
       typeof homeConfig.rooms[roomName] !== 'object'
@@ -91,7 +82,7 @@ function initMemory() {
       changed = true;
     }
 
-    const defaults = getDefaultSources(roomName);
+    const defaults = getDefaultSources(homeName, roomName);
     for (let index = 0; index < defaults.length; index++) {
       if (
         !remoteConfig.sources[index] ||
@@ -108,7 +99,7 @@ function initMemory() {
   }
 
   if (changed) {
-    console.log('[remote] memory initialized');
+    console.log('[remote] memory initialized for ' + homeName);
   }
 
   return homeConfig;
@@ -580,8 +571,9 @@ function isHomeEconomyStable(homeRoomName) {
     return false;
   }
 
-  const spawn = getHomeSpawn(room);
-  if (!spawn || spawn.spawning) return false;
+  // Require at least one free spawn (multi-spawn aware): with 2-3 spawns at
+  // RCL7+, a busy spawn #0 must not block remote spawning from a free one.
+  if (!spawnUtil.getAvailableSpawn(room)) return false;
 
   // When stored energy is abundant (>50k), transient extension dips
   // should not pause remote spawning. A 150-energy gap on a 376k
@@ -743,8 +735,15 @@ function buildRemoteBuilderBody(energyCapacity) {
 }
 
 function buildReserverBody(energyCapacity) {
-  if (energyCapacity < 650) return null;
-  return [CLAIM, MOVE];
+  // Each CLAIM adds +1 to controller reservation per tick. A single CLAIM
+  // (the old body) only just keeps pace and rebuilds the 5000-tick cap very
+  // slowly, so reservation often sags between reserver deaths (CLAIM creeps
+  // live ~600 ticks) — especially with travel time to the remote. 2×CLAIM
+  // doubles the reservation gain so one reserver can rebuild/hold the cap and
+  // tolerate replacement gaps. MOVE kept 1:1 with CLAIM for full road speed.
+  if (energyCapacity >= 1300) return [CLAIM, CLAIM, MOVE, MOVE];
+  if (energyCapacity >= 650) return [CLAIM, MOVE];
+  return null;
 }
 
 function getAssignedCreeps(
@@ -1232,41 +1231,49 @@ function retreat(creep, homeRoomName) {
 }
 
 function run() {
-  const homeConfig = initMemory();
+  // Iterate every colony home (colony table). Each home manages its own
+  // remote rooms and spawns from its own spawn — multi-colony ready.
+  const homeRooms = colonies.listHomeRooms();
 
-  for (const remoteRoomName in homeConfig.rooms) {
-    updateRemoteRoom(
-      HOME_ROOM,
-      remoteRoomName,
-      homeConfig.rooms[remoteRoomName]
-    );
-    planRemoteRoads(
-      HOME_ROOM,
-      remoteRoomName,
-      homeConfig.rooms[remoteRoomName]
-    );
-  }
+  for (let h = 0; h < homeRooms.length; h++) {
+    const homeRoomName = homeRooms[h];
+    const homeConfig = initMemory(homeRoomName);
 
-  const requests = getSpawnRequests(HOME_ROOM);
-  if (requests.length === 0) return;
+    for (const remoteRoomName in homeConfig.rooms) {
+      updateRemoteRoom(
+        homeRoomName,
+        remoteRoomName,
+        homeConfig.rooms[remoteRoomName]
+      );
+      planRemoteRoads(
+        homeRoomName,
+        remoteRoomName,
+        homeConfig.rooms[remoteRoomName]
+      );
+    }
 
-  const homeRoom = Game.rooms[HOME_ROOM];
-  const spawn = getHomeSpawn(homeRoom);
-  if (!spawn || spawn.spawning) return;
+    const requests = getSpawnRequests(homeRoomName);
+    if (requests.length === 0) continue;
 
-  const request = requests[0];
-  const bodyCost = getBodyCost(request.body);
-  if (homeRoom.energyAvailable < bodyCost) return;
+    const homeRoom = Game.rooms[homeRoomName];
+    if (!homeRoom) continue;
+    const spawn = spawnUtil.getAvailableSpawn(homeRoom);
+    if (!spawn) continue;
 
-  const result = spawn.spawnCreep(request.body, request.name, {
-    memory: request.memory
-  });
-  if (result === OK) {
-    console.log(`[remote] spawned ${request.name}`);
-  } else if (result !== ERR_BUSY && result !== ERR_NOT_ENOUGH_ENERGY) {
-    console.log(
-      `[remote:error] spawn ${request.role} result=${result}`
-    );
+    const request = requests[0];
+    const bodyCost = getBodyCost(request.body);
+    if (homeRoom.energyAvailable < bodyCost) continue;
+
+    const result = spawn.spawnCreep(request.body, request.name, {
+      memory: request.memory
+    });
+    if (result === OK) {
+      console.log(`[remote] spawned ${request.name}`);
+    } else if (result !== ERR_BUSY && result !== ERR_NOT_ENOUGH_ENERGY) {
+      console.log(
+        `[remote:error] spawn ${request.role} result=${result}`
+      );
+    }
   }
 }
 
