@@ -73,6 +73,7 @@ function makeWindow(startTick) {
     ticks: 0,
     sections: {},
     roles: {},
+    roomRoles: {},
     rooms: {}
   };
 }
@@ -88,6 +89,7 @@ function begin() {
     start: Game.cpu.getUsed(),
     sections: {},
     roles: {},
+    roomRoles: {},
     rooms: {},
     creeps: {}
   };
@@ -135,7 +137,10 @@ function measureRole(role, roomName, creepName, fn) {
     return fn();
   } finally {
     const used = Game.cpu.getUsed() - start;
-    addToMap(current.roles, role || 'unknown', used);
+    const roleName = role || 'unknown';
+    const roomRoleName = (roomName || 'unknown') + ':' + roleName;
+    addToMap(current.roles, roleName, used);
+    addToMap(current.roomRoles, roomRoleName, used);
     addToMap(current.creeps, creepName || 'unknown', used);
     recordRoom(roomName, used);
   }
@@ -162,8 +167,10 @@ function end() {
 
   window.endTick = Game.time;
   window.ticks++;
+  if (!window.roomRoles) window.roomRoles = {};
   addAggregate(window.sections, current.sections);
   addAggregate(window.roles, current.roles);
+  addAggregate(window.roomRoles, current.roomRoles);
   addAggregate(window.rooms, current.rooms);
 
   profile.updatedAt = Game.time;
@@ -176,6 +183,7 @@ function end() {
     tickLimit: Game.cpu.tickLimit,
     sections: summarizeMap(current.sections, 1),
     roles: summarizeMap(current.roles, 1),
+    roomRoles: summarizeMap(current.roomRoles, 1),
     rooms: summarizeMap(current.rooms, 1),
     creeps: summarizeMap(current.creeps, 1)
   };
@@ -185,6 +193,7 @@ function end() {
     ticks: window.ticks,
     sections: summarizeMap(window.sections, window.ticks),
     roles: summarizeMap(window.roles, window.ticks),
+    roomRoles: summarizeMap(window.roomRoles, window.ticks),
     rooms: summarizeMap(window.rooms, window.ticks)
   };
 
