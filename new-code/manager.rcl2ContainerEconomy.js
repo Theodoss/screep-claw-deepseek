@@ -360,14 +360,17 @@ function buildWorkerBody(energyCapacity, role, desiredWork) {
 }
 
 function buildGuardBody(energyCapacity) {
-  // Defense: ATTACK+MOVE pairs.
-  const pairCost = 130;
-  const pairs = Math.max(
-    1,
-    Math.min(25, Math.floor(energyCapacity / pairCost))
+  // Defense: ATTACK+MOVE pairs + one HEAL+MOVE for self-heal.
+  const healPairCost = BODYPART_COST[HEAL] + BODYPART_COST[MOVE];
+  const attackPairCost = BODYPART_COST[ATTACK] + BODYPART_COST[MOVE];
+  const budgetAfterHeal = energyCapacity - healPairCost;
+  const attackPairs = Math.max(
+    0,
+    Math.min(25, Math.floor(budgetAfterHeal / attackPairCost))
   );
   const body = [];
-  for (let i = 0; i < pairs; i++) body.push(ATTACK, MOVE);
+  for (let i = 0; i < attackPairs; i++) body.push(ATTACK, MOVE);
+  body.push(HEAL, MOVE);
   return body;
 }
 

@@ -150,16 +150,19 @@ function trySpawn(spawn, role, body, allowedSourceIds) {
 }
 
 function buildGuardBody(energyCapacity) {
-  const pairCost = BODYPART_COST[ATTACK] + BODYPART_COST[MOVE];
-  const pairs = Math.max(
-    1,
-    Math.min(25, Math.floor(energyCapacity / pairCost))
+  const healPairCost = BODYPART_COST[HEAL] + BODYPART_COST[MOVE];
+  const attackPairCost = BODYPART_COST[ATTACK] + BODYPART_COST[MOVE];
+  const budgetAfterHeal = energyCapacity - healPairCost;
+  const attackPairs = Math.max(
+    0,
+    Math.min(25, Math.floor(budgetAfterHeal / attackPairCost))
   );
   const body = [];
 
-  for (let index = 0; index < pairs; index++) {
+  for (let index = 0; index < attackPairs; index++) {
     body.push(ATTACK, MOVE);
   }
+  body.push(HEAL, MOVE);
 
   return body;
 }

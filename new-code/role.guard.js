@@ -86,7 +86,38 @@ function findMissionTarget(creep, missionTarget) {
   return target;
 }
 
+function tryHeal(creep) {
+  if (creep.getActiveBodyparts(HEAL) === 0) return false;
+
+  if (creep.hits < creep.hitsMax) {
+    creep.heal(creep);
+    return true;
+  }
+
+  const damagedAllies = creep.pos.findInRange(FIND_MY_CREEPS, 3, {
+    filter: function (c) {
+      return c.id !== creep.id && c.hits < c.hitsMax;
+    }
+  });
+
+  if (damagedAllies.length > 0) {
+    const ally = creep.pos.findClosestByRange(damagedAllies);
+    if (ally) {
+      if (creep.pos.getRangeTo(ally) <= 1) {
+        creep.heal(ally);
+      } else {
+        creep.rangedHeal(ally);
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function attackMissionTarget(creep, target) {
+  tryHeal(creep);
+
   const result = creep.attack(target);
 
   if (result === ERR_NOT_IN_RANGE) {
@@ -99,6 +130,8 @@ function attackMissionTarget(creep, target) {
 }
 
 function runAttackMission(creep, missionTarget) {
+  if (tryHeal(creep)) return;
+
   const hostile = findMissionTarget(creep, missionTarget);
   if (hostile) {
     attackMissionTarget(creep, hostile);
@@ -120,8 +153,11 @@ function runAttackMission(creep, missionTarget) {
 }
 
 function runDefense(creep) {
+  if (tryHeal(creep)) return;
+
   const target = creep.pos.findClosestByPath(FIND_HOSTILE_CREEPS);
   if (target) {
+    if (tryHeal(creep)) return;
     const result = creep.attack(target);
     if (result === ERR_NOT_IN_RANGE) {
       creep.moveTo(target, {
