@@ -21,6 +21,11 @@ function buildStaticUpgraderBody(energyCapacity, desiredWork) {
   const carryParts = 2;
   let workParts = Math.min(48, desiredWork || 1);
 
+  // Even when desiredWork is low (e.g. recovery mode), try for 2 WORK
+  // if the budget allows — doubling upgrade throughput at minimal cost.
+  // The while-loop below walks back to 1 WORK if the budget is too tight.
+  if (workParts < 2) workParts = 2;
+
   // Walk down from the desired WORK count until the full
   // [WORK^N, CARRY^C, MOVE^(min 2)] layout fits the budget.
   while (workParts > 0) {
