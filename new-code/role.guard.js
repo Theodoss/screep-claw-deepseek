@@ -78,7 +78,6 @@ function findMissionTarget(creep, missionTarget) {
   if (candidates.length === 0) return null;
 
   const target =
-    creep.pos.findClosestByPath(candidates) ||
     creep.pos.findClosestByRange(candidates) ||
     candidates[0];
 
@@ -129,48 +128,12 @@ function attackMissionTarget(creep, target) {
   }
 }
 
-const ATTACK_STRUCTURES = [
-  STRUCTURE_SPAWN,
-  STRUCTURE_TOWER,
-  STRUCTURE_EXTENSION,
-  STRUCTURE_STORAGE,
-  STRUCTURE_LINK,
-  STRUCTURE_LAB,
-  STRUCTURE_TERMINAL,
-  STRUCTURE_FACTORY,
-  STRUCTURE_NUKER,
-  STRUCTURE_POWER_SPAWN
-];
-
-function findStructureTarget(creep) {
-  var all = creep.room.find(FIND_HOSTILE_STRUCTURES, {
-    filter: function (s) {
-      return ATTACK_STRUCTURES.indexOf(s.structureType) !== -1;
-    }
-  });
-
-  if (all.length === 0) return null;
-
-  all.sort(function (a, b) {
-    return ATTACK_STRUCTURES.indexOf(a.structureType) -
-      ATTACK_STRUCTURES.indexOf(b.structureType);
-  });
-
-  return creep.pos.findClosestByPath(all) || all[0];
-}
-
 function runAttackMission(creep, missionTarget) {
   if (tryHeal(creep)) return;
 
-  var hostile = findMissionTarget(creep, missionTarget);
+  const hostile = findMissionTarget(creep, missionTarget);
   if (hostile) {
     attackMissionTarget(creep, hostile);
-    return;
-  }
-
-  var structure = findStructureTarget(creep);
-  if (structure) {
-    attackMissionTarget(creep, structure);
     return;
   }
 
@@ -191,10 +154,10 @@ function runAttackMission(creep, missionTarget) {
 function runDefense(creep) {
   if (tryHeal(creep)) return;
 
-  var target = creep.pos.findClosestByPath(FIND_HOSTILE_CREEPS);
+  const target = creep.pos.findClosestByPath(FIND_HOSTILE_CREEPS);
   if (target) {
     if (tryHeal(creep)) return;
-    var result = creep.attack(target);
+    const result = creep.attack(target);
     if (result === ERR_NOT_IN_RANGE) {
       creep.moveTo(target, {
         reusePath: 2,
@@ -204,21 +167,8 @@ function runDefense(creep) {
     return;
   }
 
-  var structure = findStructureTarget(creep);
-  if (structure) {
-    var sresult = creep.attack(structure);
-    if (sresult === ERR_NOT_IN_RANGE) {
-      creep.moveTo(structure, {
-        reusePath: 2,
-        maxRooms: 1,
-        visualizePathStyle: { stroke: '#ff0000' }
-      });
-    }
-    return;
-  }
-
-  var spawns = creep.room.find(FIND_MY_SPAWNS);
-  var post = spawns[0] || creep.room.controller;
+  const spawns = creep.room.find(FIND_MY_SPAWNS);
+  const post = spawns[0] || creep.room.controller;
   if (post && creep.pos.getRangeTo(post) > 3) {
     creep.moveTo(post, {
       range: 3,
