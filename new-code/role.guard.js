@@ -188,6 +188,12 @@ function retireAttackCreep(creep) {
 
 module.exports = {
   run: function (creep) {
+    if (creep.memory.forceMission && creep.memory.targetRoom) {
+      const targetPos = new RoomPosition(25, 25, creep.memory.targetRoom);
+      runAttackMission(creep, targetPos);
+      return;
+    }
+
     if (
       creep.memory.attackCreep &&
       (
