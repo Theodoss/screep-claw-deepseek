@@ -617,6 +617,11 @@ function run(room, state) {
     haulerTargetCap,
     capacityHaulerPlan.targetCount
   );
+
+  // Room-specific population caps
+  if (room.name === 'W47N22') {
+    dynamicHaulerTarget = Math.min(dynamicHaulerTarget, 2);
+  }
   const haulerPlan = bodyPolicy.getHaulerPlan(
     room.energyCapacityAvailable,
     state.readySources,
