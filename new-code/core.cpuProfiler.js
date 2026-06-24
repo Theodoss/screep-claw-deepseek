@@ -156,6 +156,7 @@ function end() {
   if (
     !window ||
     typeof window.startTick !== 'number' ||
+    !window.roomRoles ||
     window.ticks >= WINDOW_TICKS
   ) {
     if (window && window.ticks > 0) {
@@ -167,7 +168,6 @@ function end() {
 
   window.endTick = Game.time;
   window.ticks++;
-  if (!window.roomRoles) window.roomRoles = {};
   addAggregate(window.sections, current.sections);
   addAggregate(window.roles, current.roles);
   addAggregate(window.roomRoles, current.roomRoles);
