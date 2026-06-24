@@ -129,6 +129,7 @@ function getCandidates(room, plan, rcl, roomName) {
 
   // Priority:
   //   source container: 1
+  //   swamp road: 1.2
   //   controller container: 1.5
   //   extension: 2
   //   tower: 3
@@ -226,14 +227,18 @@ function getCandidates(room, plan, rcl, roomName) {
   }
 
   // ---- roads ----
+  // Swamp roads get priority 1.2 (between source container and controller
+  // container).  Non-swamp roads stay at 6.  In heavy-swamp rooms like W47N22,
+  // roads are the difference between functional and frozen.
   if (plan.roads) {
     for (var ri = 0; ri < plan.roads.length; ri++) {
       var r = plan.roads[ri];
+      var onSwamp = isSwampInRoom(roomName, r.x, r.y);
       candidates.push({
         x: r.x,
         y: r.y,
         structureType: STRUCTURE_ROAD,
-        priority: 6
+        priority: onSwamp ? 1.2 : 6
       });
     }
   }
