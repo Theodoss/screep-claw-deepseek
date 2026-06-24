@@ -2,7 +2,10 @@ const economy = require('manager.economy');
 const logistics = require('logistics.local');
 
 const TOWER_PEACE_RESERVE = 800;
+const MOVE_REUSE_PATH = 20;
+const STUCK_REPATH_TICKS = 2;
 const roomRuntimeCache = {};
+const moveRuntimeCache = {};
 
 function getRoomData(room) {
   const cached = roomRuntimeCache[room.name];
@@ -11,6 +14,7 @@ function getRoomData(room) {
   const data = {
     tick: Game.time,
     myStructures: null,
+    energyStructures: null,
     hostiles: null,
     dropped: null,
     tombstones: null,
@@ -28,12 +32,84 @@ function getMyStructures(room) {
   return data.myStructures;
 }
 
+function getEnergyStructures(room) {
+  const data = getRoomData(room);
+  if (data.energyStructures) return data.energyStructures;
+
+  const energyStructures = {
+    spawns: [],
+    extensions: [],
+    towers: []
+  };
+  const structures = getMyStructures(room);
+
+  for (const structure of structures) {
+    if (structure.structureType === STRUCTURE_SPAWN) {
+      energyStructures.spawns.push(structure);
+    } else if (structure.structureType === STRUCTURE_EXTENSION) {
+      energyStructures.extensions.push(structure);
+    } else if (structure.structureType === STRUCTURE_TOWER) {
+      energyStructures.towers.push(structure);
+    }
+  }
+
+  data.energyStructures = energyStructures;
+  return energyStructures;
+}
+
 function getHostiles(room) {
   const data = getRoomData(room);
   if (!data.hostiles) {
     data.hostiles = room.find(FIND_HOSTILE_CREEPS);
   }
   return data.hostiles;
+}
+
+function getMoveTargetKey(target) {
+  if (target.id) return target.id;
+  return [
+    target.pos.roomName,
+    target.pos.x,
+    target.pos.y
+  ].join(':');
+}
+
+function moveHauler(creep, target) {
+  if (creep.fatigue > 0) return ERR_TIRED;
+
+  const targetKey = getMoveTargetKey(target);
+  const previous = moveRuntimeCache[creep.name];
+  let stuckTicks = 0;
+
+  if (
+    previous &&
+    previous.tick === Game.time - 1 &&
+    previous.targetKey === targetKey &&
+    previous.x === creep.pos.x &&
+    previous.y === creep.pos.y
+  ) {
+    stuckTicks = previous.stuckTicks + 1;
+  }
+
+  const forceRepath = stuckTicks >= STUCK_REPATH_TICKS;
+  if (forceRepath) {
+    delete creep.memory._move;
+    stuckTicks = 0;
+  }
+
+  const result = creep.moveTo(target, {
+    reusePath: MOVE_REUSE_PATH,
+    ignoreCreeps: !forceRepath
+  });
+
+  moveRuntimeCache[creep.name] = {
+    tick: Game.time,
+    x: creep.pos.x,
+    y: creep.pos.y,
+    targetKey: targetKey,
+    stuckTicks: stuckTicks
+  };
+  return result;
 }
 
 function getRoomSourceMemory(creep) {
@@ -179,9 +255,10 @@ function selectPickup(creep) {
 }
 
 function findSpawnTarget(creep) {
-  const targets = getMyStructures(creep.room).filter(function (structure) {
+  const targets = getEnergyStructures(creep.room).spawns.filter(function (
+    structure
+  ) {
     return (
-      structure.structureType === STRUCTURE_SPAWN &&
       structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
     );
   });
@@ -191,9 +268,10 @@ function findSpawnTarget(creep) {
 }
 
 function findExtensionTarget(creep) {
-  const targets = getMyStructures(creep.room).filter(function (structure) {
+  const targets = getEnergyStructures(creep.room).extensions.filter(function (
+    structure
+  ) {
     return (
-      structure.structureType === STRUCTURE_EXTENSION &&
       structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
     );
   });
@@ -204,9 +282,8 @@ function findExtensionTarget(creep) {
 
 function findTower(creep) {
   const hostiles = getHostiles(creep.room);
-  const targets = getMyStructures(creep.room).filter(
+  const targets = getEnergyStructures(creep.room).towers.filter(
     structure =>
-      structure.structureType === STRUCTURE_TOWER &&
       structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
       (
         hostiles.length > 0 ||
@@ -336,9 +413,7 @@ function deliver(creep) {
       request.amount
     );
   if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(request.target, {
-      visualizePathStyle: { stroke: '#ffffff' }
-    });
+    moveHauler(creep, request.target);
   } else if (
     result === OK &&
     creep.memory.deliveryTargetId === request.target.id
@@ -394,9 +469,7 @@ module.exports = {
       ? creep.pickup(pickup.target)
       : creep.withdraw(pickup.target, RESOURCE_ENERGY);
     if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(pickup.target, {
-        visualizePathStyle: { stroke: '#ffaa00' }
-      });
+      moveHauler(creep, pickup.target);
     }
   }
 };
