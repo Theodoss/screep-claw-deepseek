@@ -847,7 +847,9 @@ function run(room, state) {
   // otherwise           → 50% cap  (original safe floor, proven stable)
   // Floor of 300 ensures a minimum [W,C×2,M×2] body is possible.
   const upgraderBodyBuilder = function (energyCap, role, desiredWork) {
-    if (role === 'upgrader') {
+    // Match both 'upgrader' and legacy 'rcl1Upgrader' (used by bootstrap at RCL≤2).
+    // Without this the body builder falls through to buildWorkerBody → BASIC_BODY.
+    if (role === 'upgrader' || role === 'rcl1Upgrader') {
       var capRatio = 0.50; // safe default (original behaviour)
       var stored = economyState.storedEnergy;
       if (typeof stored === 'number') {
