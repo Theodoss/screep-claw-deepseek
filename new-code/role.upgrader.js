@@ -145,8 +145,14 @@ module.exports = {
         creep.moveTo(upgraderLink, {
           visualizePathStyle: { stroke: '#ffaa00' }
         });
+        return;
       }
-      return;
+      // Only return if we actually got energy; otherwise fall through to
+      // container / spawn / storage so the upgrader doesn't get stuck when
+      // the link manager drains the link between our check and withdraw.
+      if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        return;
+      }
     }
 
     // Preferred: any upgrade container (within 4 tiles of controller)
