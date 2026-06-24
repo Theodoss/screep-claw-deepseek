@@ -279,8 +279,17 @@ function getFallbackReasons(context) {
   // Only flag economy-recovery when stored energy is actually low.
   // Transient hauler replacement or energyAvailable dips during spawning
   // should not trigger recovery mode when the colony is energy-rich.
+  //
+  // Scale the threshold to the room's energy capacity so low-RCL rooms
+  // aren't permanently trapped in recovery.  RCL2 (cap ~550) → floor 5k;
+  // RCL8 (cap ~12900) → cap 50k.
+  var cap = input.energyCapacityAvailable || 0;
+  var recoveryThreshold = Math.max(
+    5000,
+    Math.min(50000, cap > 0 ? cap * 10 : 50000)
+  );
   if (
-    (input.storedEnergy || 0) < 50000 && (
+    (input.storedEnergy || 0) < recoveryThreshold && (
       input.energyStarved ||
       input.minersHealthy === false ||
       input.haulersHealthy === false

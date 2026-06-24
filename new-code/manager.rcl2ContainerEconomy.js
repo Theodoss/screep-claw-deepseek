@@ -703,7 +703,8 @@ function run(room, state) {
       towersCanMaintain: towersMaintain,
       uncoveredSourceCount: state.uncoveredSources.length,
       upgraderWorkTarget: requestedUpgradeWork,
-      storedEnergy: economyState.storedEnergy
+      storedEnergy: economyState.storedEnergy,
+      energyCapacityAvailable: room.energyCapacityAvailable
     }
   );
   const fallbackHarvester = population.getRole(
