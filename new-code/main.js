@@ -90,7 +90,7 @@ function shouldAutoPlanFrontBase(room) {
     return true;
   }
 
-  return room.name === 'W47N22';
+  return false;
 }
 
 function activateRoomPlanner(roomName) {
