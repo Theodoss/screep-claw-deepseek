@@ -2,6 +2,39 @@ const economy = require('manager.economy');
 const logistics = require('logistics.local');
 
 const TOWER_PEACE_RESERVE = 800;
+const roomRuntimeCache = {};
+
+function getRoomData(room) {
+  const cached = roomRuntimeCache[room.name];
+  if (cached && cached.tick === Game.time) return cached;
+
+  const data = {
+    tick: Game.time,
+    myStructures: null,
+    hostiles: null,
+    dropped: null,
+    tombstones: null,
+    ruins: null
+  };
+  roomRuntimeCache[room.name] = data;
+  return data;
+}
+
+function getMyStructures(room) {
+  const data = getRoomData(room);
+  if (!data.myStructures) {
+    data.myStructures = room.find(FIND_MY_STRUCTURES);
+  }
+  return data.myStructures;
+}
+
+function getHostiles(room) {
+  const data = getRoomData(room);
+  if (!data.hostiles) {
+    data.hostiles = room.find(FIND_HOSTILE_CREEPS);
+  }
+  return data.hostiles;
+}
 
 function getRoomSourceMemory(creep) {
   if (!Memory.rooms || !Memory.rooms[creep.memory.home]) return {};
@@ -25,37 +58,43 @@ function getSourceContainers(creep) {
 
 function selectSalvage(creep) {
   const freeCapacity = creep.store.getFreeCapacity(RESOURCE_ENERGY);
-  const dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
-    filter: resource =>
-      resource.resourceType === RESOURCE_ENERGY &&
-      resource.amount >= Math.min(50, freeCapacity)
-  });
-  const tombstones = creep.room.find(FIND_TOMBSTONES, {
-    filter: tombstone =>
-      tombstone.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-  });
-  const ruins = creep.room.find(FIND_RUINS, {
-    filter: ruin => ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-  });
+  const roomData = getRoomData(creep.room);
+  if (!roomData.dropped) {
+    roomData.dropped = creep.room.find(FIND_DROPPED_RESOURCES);
+  }
+  if (!roomData.tombstones) {
+    roomData.tombstones = creep.room.find(FIND_TOMBSTONES);
+  }
+  if (!roomData.ruins) {
+    roomData.ruins = creep.room.find(FIND_RUINS);
+  }
   const targets = [];
 
-  for (const resource of dropped) {
+  for (const resource of roomData.dropped) {
+    if (
+      resource.resourceType !== RESOURCE_ENERGY ||
+      resource.amount < Math.min(50, freeCapacity)
+    ) {
+      continue;
+    }
     targets.push({
       target: resource,
       type: 'pickup',
       score: resource.amount - creep.pos.getRangeTo(resource) * 20
     });
   }
-  for (const tombstone of tombstones) {
+  for (const tombstone of roomData.tombstones) {
     const amount = tombstone.store.getUsedCapacity(RESOURCE_ENERGY);
+    if (amount <= 0) continue;
     targets.push({
       target: tombstone,
       type: 'withdraw',
       score: amount - creep.pos.getRangeTo(tombstone) * 20
     });
   }
-  for (const ruin of ruins) {
+  for (const ruin of roomData.ruins) {
     const amount = ruin.store.getUsedCapacity(RESOURCE_ENERGY);
+    if (amount <= 0) continue;
     targets.push({
       target: ruin,
       type: 'withdraw',
@@ -140,47 +179,33 @@ function selectPickup(creep) {
 }
 
 function findSpawnTarget(creep) {
-  const target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function (structure) {
-      return (
-        structure.structureType === STRUCTURE_SPAWN &&
-        structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-      );
-    }
+  const targets = getMyStructures(creep.room).filter(function (structure) {
+    return (
+      structure.structureType === STRUCTURE_SPAWN &&
+      structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    );
   });
-  return target || null;
+  return targets.length > 0
+    ? creep.pos.findClosestByRange(targets)
+    : null;
 }
 
 function findExtensionTarget(creep) {
-  const target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function (structure) {
-      return (
-        structure.structureType === STRUCTURE_EXTENSION &&
-        structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-      );
-    }
-  });
-  return target || null;
-}
-
-function findSpawnOrExtension(creep) {
-  const targets = creep.room.find(FIND_MY_STRUCTURES, {
-    filter: structure =>
-      (
-        structure.structureType === STRUCTURE_SPAWN ||
-        structure.structureType === STRUCTURE_EXTENSION
-      ) &&
+  const targets = getMyStructures(creep.room).filter(function (structure) {
+    return (
+      structure.structureType === STRUCTURE_EXTENSION &&
       structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    );
   });
-  if (targets.length === 0) return null;
-
-  return creep.pos.findClosestByPath(targets);
+  return targets.length > 0
+    ? creep.pos.findClosestByRange(targets)
+    : null;
 }
 
 function findTower(creep) {
-  const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
-  const targets = creep.room.find(FIND_MY_STRUCTURES, {
-    filter: structure =>
+  const hostiles = getHostiles(creep.room);
+  const targets = getMyStructures(creep.room).filter(
+    structure =>
       structure.structureType === STRUCTURE_TOWER &&
       structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
       (
@@ -188,10 +213,10 @@ function findTower(creep) {
         structure.store.getUsedCapacity(RESOURCE_ENERGY) <
           TOWER_PEACE_RESERVE
       )
-  });
+  );
   if (targets.length === 0) return null;
 
-  return creep.pos.findClosestByPath(targets);
+  return creep.pos.findClosestByRange(targets);
 }
 
 function findStorage(creep) {
