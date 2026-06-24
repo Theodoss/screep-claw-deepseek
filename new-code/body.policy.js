@@ -1,8 +1,8 @@
 const SOURCE_ENERGY_PER_TICK = 10;
 const CARRY_CAPACITY_PER_PART = 50;
-const HAULER_SET_COST = 200;
-const HAULER_SET_PARTS = 4;
-const CARRIES_PER_HAULER_SET = 3;
+const HAULER_SET_COST = 150;
+const HAULER_SET_PARTS = 3;
+const CARRIES_PER_HAULER_SET = 2;
 const HAULER_THROUGHPUT_MARGIN = 1.1;
 const MIN_HAULER_CARRY_PARTS = 12;
 const DEFAULT_SOURCE_DISTANCE = 10;
@@ -16,9 +16,9 @@ function getBodyCost(body) {
 
 function buildStaticUpgraderBody(energyCapacity, desiredWork) {
   // Static upgrader parks beside the controller container and barely moves.
-  // 2 CARRY for longer refill intervals.
+  // 1 CARRY (reduced from 2 for cheaper body).
   // 1–2 MOVE for initial positioning; no need for road-speed movement.
-  const carryParts = 2;
+  const carryParts = 1;
   let workParts = Math.min(48, desiredWork || 1);
 
   // Even when desiredWork is low (e.g. recovery mode), try for 2 WORK
@@ -113,7 +113,7 @@ function getHaulerPlan(
   const body = [];
 
   for (let index = 0; index < sets; index++) {
-    body.push(CARRY, CARRY, CARRY, MOVE);
+    body.push(CARRY, CARRY, MOVE);
   }
 
   return {
