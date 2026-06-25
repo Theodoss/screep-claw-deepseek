@@ -387,6 +387,35 @@ function selectNearbySalvage(creep, sourceConfig) {
   return null;
 }
 
+function getOtherSourceContainers(creep) {
+  var homeRoom = creep.memory.homeRoom;
+  var remoteRoom = creep.memory.remoteRoom;
+  var mySourceIndex = creep.memory.sourceIndex;
+  var result = [];
+
+  var homeConfig = Memory.remote && Memory.remote[homeRoom];
+  if (!homeConfig || !homeConfig.rooms) return result;
+  var remoteConfig = homeConfig.rooms[remoteRoom];
+  if (!remoteConfig || !remoteConfig.sources) return result;
+
+  for (var i = 0; i < remoteConfig.sources.length; i++) {
+    if (i === mySourceIndex) continue;
+    var src = remoteConfig.sources[i];
+    if (!src || src.enabled === false) continue;
+    if (typeof src.containerX !== 'number') continue;
+
+    var container = remote.findContainerAt(remoteRoom, src.containerX, src.containerY);
+    if (container) {
+      result.push({
+        container: container,
+        sourceIndex: i,
+        sourceConfig: src
+      });
+    }
+  }
+  return result;
+}
+
 function collect(creep, sourceConfig) {
   var containerX = sourceConfig.containerX;
   var containerY = sourceConfig.containerY;
@@ -408,13 +437,14 @@ function collect(creep, sourceConfig) {
     }
   };
 
+  // ── Cross-room travel ──
   if (creep.pos.roomName !== containerRoom) {
     if (followHaulPath(creep, sourceConfig, false)) return;
-
     creep.moveTo(containerPosition, moveOpts);
     return;
   }
 
+  // ── On container tile → move off ──
   if (
     creep.pos.x === containerX &&
     creep.pos.y === containerY
@@ -425,37 +455,88 @@ function collect(creep, sourceConfig) {
     return;
   }
 
+  // ── Not in range → approach ──
   if (creep.pos.getRangeTo(containerPosition) > 1) {
     if (followHaulPath(creep, sourceConfig, false)) return;
-
     creep.moveTo(containerPosition, moveOpts);
     return;
   }
 
-  var container = remote.findContainerAt(
-    sourceConfig.roomName,
-    sourceConfig.containerX,
-    sourceConfig.containerY
-  );
-  if (
-    container &&
-    container.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-  ) {
-    creep.withdraw(container, RESOURCE_ENERGY);
-    return;
-  }
+  // ── At range 1 of assigned container ──
 
+  // Priority 1: Salvage (dropped, tombstone, ruin) within 2 tiles
   var salvage = selectNearbySalvage(creep, sourceConfig);
   if (salvage) {
-    var result = salvage.type === 'pickup'
+    var sResult = salvage.type === 'pickup'
       ? creep.pickup(salvage.target)
       : creep.withdraw(salvage.target, RESOURCE_ENERGY);
-    if (result === ERR_NOT_IN_RANGE) {
+    if (sResult === ERR_NOT_IN_RANGE) {
       creep.moveTo(salvage.target, { reusePath: 5 });
     }
     return;
   }
 
+  // Priority 2: Assigned container
+  var container = remote.findContainerAt(
+    sourceConfig.roomName,
+    sourceConfig.containerX,
+    sourceConfig.containerY
+  );
+
+  var assignedEnergy = container
+    ? container.store.getUsedCapacity(RESOURCE_ENERGY)
+    : 0;
+  var assignedCap = container
+    ? container.store.getCapacity(RESOURCE_ENERGY)
+    : 0;
+
+  // If assigned container has enough energy (> 50% capacity or > 0 when small)
+  if (assignedEnergy > 0) {
+    // Only switch if assigned container is below 50% and another has more
+    if (assignedCap > 0 && assignedEnergy < assignedCap * 0.5) {
+      var others = getOtherSourceContainers(creep);
+      var bestOther = null;
+      var bestEnergy = 0;
+      for (var oi = 0; oi < others.length; oi++) {
+        var oe = others[oi].container.store.getUsedCapacity(RESOURCE_ENERGY);
+        if (oe > bestEnergy) {
+          bestEnergy = oe;
+          bestOther = others[oi];
+        }
+      }
+
+      if (bestOther && bestEnergy > assignedEnergy && bestEnergy > 0) {
+        // Switch to other source
+        creep.memory.sourceIndex = bestOther.sourceIndex;
+        creep.moveTo(bestOther.container, { range: 1, reusePath: 5 });
+        return;
+      }
+    }
+
+    // Use assigned container
+    creep.withdraw(container, RESOURCE_ENERGY);
+    return;
+  }
+
+  // Priority 3: Assigned empty, check others
+  var othersEmpty = getOtherSourceContainers(creep);
+  var bestFallback = null;
+  var bestFallbackEnergy = 0;
+  for (var fi = 0; fi < othersEmpty.length; fi++) {
+    var fe = othersEmpty[fi].container.store.getUsedCapacity(RESOURCE_ENERGY);
+    if (fe > bestFallbackEnergy) {
+      bestFallbackEnergy = fe;
+      bestFallback = othersEmpty[fi];
+    }
+  }
+
+  if (bestFallback && bestFallbackEnergy > 0) {
+    creep.memory.sourceIndex = bestFallback.sourceIndex;
+    creep.moveTo(bestFallback.container, { range: 1, reusePath: 5 });
+    return;
+  }
+
+  // Nothing available → wait
   var waitPosition = remote.getWaitPosition(sourceConfig);
   if (creep.pos.getRangeTo(waitPosition) > 0) {
     creep.moveTo(waitPosition, { reusePath: 5 });
