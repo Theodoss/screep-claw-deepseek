@@ -157,10 +157,10 @@ function isRemotePaused(homeRoomName, remoteRoomName) {
 
   if (!homeConfig || homeConfig.enabled !== true) return true;
   if (!remoteConfig || remoteConfig.enabled !== true) return true;
-  if (remoteConfig.status === 'danger') return true;
-  // Threat detected by defense system — pause remote operations
-  if (remoteConfig.threat) return true;
-  return (remoteConfig.pauseUntil || 0) > Game.time;
+
+  // Defense Group handles threats centrally — remote economy is never paused.
+  // Tier 3 spawning is gated in main.js, not here.
+  return false;
 }
 
 function getPositionLook(roomName, x, y, lookType) {
@@ -517,27 +517,25 @@ function updateRemoteRoom(homeRoomName, remoteRoomName, remoteConfig) {
   const room = Game.rooms[remoteRoomName];
   if (!remoteConfig) return;
   if (!room) {
-    if (
-      remoteConfig.status === 'danger' &&
-      (remoteConfig.pauseUntil || 0) <= Game.time
-    ) {
+    // Without vision, trust the defense system to handle threats.
+    // Clear stale danger status if exist.
+    if (remoteConfig.status === 'danger') {
       remoteConfig.status = 'active';
-      console.log(`[remote] pause expired ${remoteRoomName}; retrying`);
     }
     return;
   }
 
   const hostiles = room.find(FIND_HOSTILE_CREEPS);
   if (hostiles.length > 0) {
+    // Hostiles present — classification and visibility tracking only.
+    // Do NOT pause the remote economy. Defense Group handles threat response.
     const stateChanged = remoteConfig.status !== 'danger';
     remoteConfig.status = 'danger';
-    remoteConfig.pauseUntil = Game.time + DANGER_PAUSE_TICKS;
-    remoteConfig.stableSince = 0;
     remoteConfig.clearStreak = 0;
     if (stateChanged) {
+      // Economy is NOT paused; defense guard will handle.
       console.log(
-        `[remote] danger detected ${remoteRoomName}; paused until ` +
-        remoteConfig.pauseUntil
+        `[remote] hostiles detected ${remoteRoomName}; defense guard responding`
       );
     }
   } else if (remoteConfig.status === 'danger') {
