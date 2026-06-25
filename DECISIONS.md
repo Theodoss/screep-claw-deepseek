@@ -414,3 +414,459 @@ Game.gcl.level;   // 必須 >= 已擁有房數+1，否則只 hold claimer
   2. 無聲回退會被 git 自動合併吃掉、難以察覺；雙方都應把「為什麼這樣設」寫進 DECISIONS，避免 ping-pong。
 - **教訓**: 多人/多 agent 改同一 repo，**靜默的相反修改 + git 自動合併 = 看不見的回退**。防線是：關鍵決策寫進共享文檔、爭議處留 in-code 註解標記、review 時 diff 對照文檔與 code 是否一致。
 - **狀態**: 已重新套用 + 語法驗證。**若 agent 有意要縮回 1 CLAIM，請先在此說明理由再改。**
+
+---
+
+## D014 — 廢除 remoteBuilder，改為統一 zoneBuilder
+
+- **時間**: 2026-06-25
+- **原因**:
+  1. `rcl1Builder`（母房）和 `remoteBuilder`（遠端）是兩套完全獨立的 role，但它們守的是同一個防區（母房 + remote rooms）。
+  2. `role.support.js` 的 `runBuilderWork` 優先順序錯誤：`fillSpawnOrExtensions` 排在 `runConstruction` 之前，造成 builder 看到 extension 沒能量就去補，而非優先蓋建築。
+  3. `remoteNeedsBuilder` 只看 container site，不看 road construction sites，導致遠端只有道路要蓋時沒有 builder。
+  4. 沒有任何 creep 負責修路（road repair），`runGeneralRepair` 永遠因排在 extension 填充之後而執行不到。
+  5. 母房沒有 construction sites 時，`remainingBuildWork=0`，builder target=0，不 spawn，路就沒人修。
+- **決策**: 
+  - 廢除 `role.remoteBuilder.js`（保留檔案但不再使用）
+  - 廢除 `role.builder.js` 和 `role.rcl1Builder.js` 在 RCL2+ 的 spawn
+  - 新增 `role.zoneBuilder.js`：一個 builder 負責整個防區（母房 + 所有 remote rooms）
+  - 永遠至少 spawn 1 個 zoneBuilder（無工地時去修路/patrol）
+
+---
+
+### DeepSeek 修改指示
+
+**請依序完成以下 5 個修改，每個都要 commit，最後把改動同步寫回這份 DECISIONS.md 的「狀態」欄。**
+
+---
+
+#### 修改 1：新建 `new-code/role.zoneBuilder.js`
+
+整個檔案重新寫，不繼承舊 builder 邏輯：
+
+```javascript
+'use strict';
+// D014: zoneBuilder — 統一母房 + 遠端的 builder role
+// 取代 role.rcl1Builder 和 role.remoteBuilder
+// ⚠️ 請勿回退成分離的 rcl1Builder/remoteBuilder 架構
+
+const colonies = require('config.colonies');
+const repairPolicy = require('repair.policy');
+
+// 建築優先順序（數字越小越優先）
+const CONSTRUCTION_PRIORITY = {};
+CONSTRUCTION_PRIORITY[STRUCTURE_SPAWN]     = 0;
+CONSTRUCTION_PRIORITY[STRUCTURE_EXTENSION] = 1;
+CONSTRUCTION_PRIORITY[STRUCTURE_CONTAINER] = 2;
+CONSTRUCTION_PRIORITY[STRUCTURE_TOWER]     = 3;
+CONSTRUCTION_PRIORITY[STRUCTURE_LINK]      = 4;
+CONSTRUCTION_PRIORITY[STRUCTURE_ROAD]      = 5;
+
+function constructionPriority(site) {
+  var p = CONSTRUCTION_PRIORITY[site.structureType];
+  return p === undefined ? 6 : p;
+}
+
+// ── 能量取得 ──────────────────────────────────────────────
+
+function findCurrentRoomEnergy(creep) {
+  // 1. 掉落能量
+  var dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
+    filter: function(r) { return r.resourceType === RESOURCE_ENERGY && r.amount >= 20; }
+  });
+  if (dropped.length > 0) {
+    return { target: creep.pos.findClosestByRange(dropped), type: 'pickup' };
+  }
+
+  // 2. tombstone / ruins
+  var salvage = [];
+  creep.room.find(FIND_TOMBSTONES).forEach(function(t) {
+    if (t.store.getUsedCapacity(RESOURCE_ENERGY) >= 20) salvage.push(t);
+  });
+  creep.room.find(FIND_RUINS).forEach(function(r) {
+    if (r.store.getUsedCapacity(RESOURCE_ENERGY) >= 20) salvage.push(r);
+  });
+  if (salvage.length > 0) {
+    return { target: creep.pos.findClosestByRange(salvage), type: 'withdraw' };
+  }
+
+  // 3. container（排除 controller container — 以 hitsMax 位置判斷或直接用所有 container）
+  var containers = creep.room.find(FIND_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_CONTAINER &&
+        s.store.getUsedCapacity(RESOURCE_ENERGY) >= Math.max(50, creep.store.getFreeCapacity() * 0.3);
+    }
+  });
+  if (containers.length > 0) {
+    return { target: creep.pos.findClosestByRange(containers), type: 'withdraw' };
+  }
+
+  // 4. storage
+  if (creep.room.storage && creep.room.storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    return { target: creep.room.storage, type: 'withdraw' };
+  }
+
+  return null;
+}
+
+function findHomeRoomEnergy(creep) {
+  var homeRoom = Game.rooms[creep.memory.homeRoom];
+  if (!homeRoom) return null;
+
+  if (homeRoom.storage && homeRoom.storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    return { target: homeRoom.storage, type: 'withdraw' };
+  }
+
+  var containers = homeRoom.find(FIND_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_CONTAINER &&
+        s.store.getUsedCapacity(RESOURCE_ENERGY) >= 200;
+    }
+  });
+  if (containers.length > 0) {
+    return { target: creep.pos.findClosestByRange(containers), type: 'withdraw' };
+  }
+
+  // 最後手段：採礦
+  var sources = homeRoom.find(FIND_SOURCES, { filter: function(s) { return s.energy > 0; } });
+  if (sources.length > 0) {
+    return { target: creep.pos.findClosestByRange(sources), type: 'harvest' };
+  }
+
+  return null;
+}
+
+function acquireEnergy(creep) {
+  // 先嘗試當前房間
+  var local = findCurrentRoomEnergy(creep);
+  if (local) {
+    var r = local.type === 'pickup'
+      ? creep.pickup(local.target)
+      : creep.withdraw(local.target, RESOURCE_ENERGY);
+    if (r === ERR_NOT_IN_RANGE) {
+      creep.moveTo(local.target, { reusePath: 10, visualizePathStyle: { stroke: '#ffaa00' } });
+    }
+    return;
+  }
+
+  // 當前房間沒能量 → 回母房
+  if (creep.pos.roomName !== creep.memory.homeRoom) {
+    creep.moveTo(new RoomPosition(25, 25, creep.memory.homeRoom), { reusePath: 20 });
+    return;
+  }
+
+  // 在母房取能量
+  var home = findHomeRoomEnergy(creep);
+  if (!home) return;
+
+  if (home.type === 'harvest') {
+    var hr = creep.harvest(home.target);
+    if (hr === ERR_NOT_IN_RANGE) {
+      creep.moveTo(home.target, { reusePath: 5, visualizePathStyle: { stroke: '#ffaa00' } });
+    }
+    return;
+  }
+
+  var wr = home.type === 'pickup'
+    ? creep.pickup(home.target)
+    : creep.withdraw(home.target, RESOURCE_ENERGY);
+  if (wr === ERR_NOT_IN_RANGE) {
+    creep.moveTo(home.target, { reusePath: 10, visualizePathStyle: { stroke: '#ffaa00' } });
+  }
+}
+
+// ── 工作尋找 ──────────────────────────────────────────────
+
+function selectConstructionSite(creep, sites) {
+  if (sites.length === 0) return null;
+  var best = sites[0];
+  for (var i = 1; i < sites.length; i++) {
+    var site = sites[i];
+    var p = constructionPriority(site);
+    var bp = constructionPriority(best);
+    if (p < bp || (p === bp && creep.pos.getRangeTo(site) < creep.pos.getRangeTo(best))) {
+      best = site;
+    }
+  }
+  return best;
+}
+
+function findConstructionInRoom(creep, roomName) {
+  var room = Game.rooms[roomName];
+  if (!room) return null;
+  var sites = room.find(FIND_CONSTRUCTION_SITES);
+  if (sites.length === 0) return null;
+  var site = selectConstructionSite(creep, sites);
+  return site ? { target: site, type: 'build', room: roomName } : null;
+}
+
+function findEmergencyRepairInRoom(creep, roomName) {
+  var room = Game.rooms[roomName];
+  if (!room) return null;
+  var structures = room.find(FIND_STRUCTURES).filter(repairPolicy.isEmergencyRepairTarget);
+  if (structures.length === 0) return null;
+  var target = creep.pos.findClosestByRange(structures) || structures[0];
+  return { target: target, type: 'repair', room: roomName };
+}
+
+function findRoadRepairInRoom(creep, roomName) {
+  var room = Game.rooms[roomName];
+  if (!room) return null;
+  var roads = room.find(FIND_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_ROAD && s.hits < s.hitsMax * 0.6;
+    }
+  });
+  if (roads.length === 0) return null;
+  // 挑最嚴重的
+  var worst = roads[0];
+  for (var i = 1; i < roads.length; i++) {
+    if (roads[i].hits / roads[i].hitsMax < worst.hits / worst.hitsMax) worst = roads[i];
+  }
+  return { target: worst, type: 'repair', room: roomName };
+}
+
+function getZoneRooms(homeRoom) {
+  var remotes = colonies.getRemoteRooms(homeRoom);
+  return [homeRoom].concat(Object.keys(remotes));
+}
+
+function findWork(creep) {
+  var homeRoom = creep.memory.homeRoom;
+  var zoneRooms = getZoneRooms(homeRoom);
+  var currentRoom = creep.pos.roomName;
+
+  // 當前房間優先，其他按 zoneRooms 順序
+  var roomOrder = [currentRoom];
+  for (var i = 0; i < zoneRooms.length; i++) {
+    if (zoneRooms[i] !== currentRoom) roomOrder.push(zoneRooms[i]);
+  }
+
+  // 1. 緊急修復（任何可見房間）
+  for (var ri = 0; ri < roomOrder.length; ri++) {
+    var w = findEmergencyRepairInRoom(creep, roomOrder[ri]);
+    if (w) return w;
+  }
+
+  // 2. 建築工地（當前 → 母房 → remotes）
+  for (var ci = 0; ci < roomOrder.length; ci++) {
+    var cw = findConstructionInRoom(creep, roomOrder[ci]);
+    if (cw) return cw;
+  }
+
+  // 3. 道路修復（任何可見防區房間）
+  for (var rdi = 0; rdi < roomOrder.length; rdi++) {
+    var rw = findRoadRepairInRoom(creep, roomOrder[rdi]);
+    if (rw) return rw;
+  }
+
+  return null;
+}
+
+// 沒有工作時巡邏防區
+function roam(creep) {
+  var homeRoom = creep.memory.homeRoom;
+  var zoneRooms = getZoneRooms(homeRoom);
+  if (zoneRooms.length <= 1) return;
+
+  var idx = creep.memory.patrolIndex || 0;
+  if (idx >= zoneRooms.length) idx = 0;
+
+  var targetRoom = zoneRooms[idx];
+  if (creep.pos.roomName !== targetRoom) {
+    creep.moveTo(new RoomPosition(25, 25, targetRoom), { reusePath: 20 });
+  } else {
+    creep.memory.patrolIndex = (idx + 1) % zoneRooms.length;
+  }
+}
+
+// ── 主迴圈 ────────────────────────────────────────────────
+
+module.exports = {
+  run: function(creep) {
+    // 狀態切換
+    if (creep.memory.working && creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
+      creep.memory.working = false;
+    }
+    if (!creep.memory.working && creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      creep.memory.working = true;
+    }
+
+    // 中途切換：有一定能量且沒有好能量來源時直接工作
+    if (!creep.memory.working && creep.store.getUsedCapacity(RESOURCE_ENERGY) >= 50) {
+      if (!findCurrentRoomEnergy(creep)) {
+        creep.memory.working = true;
+      }
+    }
+
+    if (!creep.memory.working) {
+      acquireEnergy(creep);
+      return;
+    }
+
+    var work = findWork(creep);
+    if (!work) {
+      roam(creep);
+      return;
+    }
+
+    // 如果工作在其他房間，先移動過去
+    if (creep.pos.roomName !== work.room) {
+      creep.moveTo(new RoomPosition(25, 25, work.room), { reusePath: 20 });
+      return;
+    }
+
+    var result = work.type === 'build'
+      ? creep.build(work.target)
+      : creep.repair(work.target);
+
+    if (result === ERR_NOT_IN_RANGE) {
+      creep.moveTo(work.target, { reusePath: 10, visualizePathStyle: { stroke: '#00ff00' } });
+    }
+  }
+};
+```
+
+---
+
+#### 修改 2：`main.js` — 加入 zoneBuilder
+
+在 `require` 區段加入：
+```javascript
+const roleZoneBuilder = require('role.zoneBuilder');
+```
+
+在 `ROLE_MODULES` 物件加入：
+```javascript
+zoneBuilder: roleZoneBuilder,
+```
+
+保留 `rcl1Builder: roleRcl1Builder` 和 `remoteBuilder: roleRemoteBuilder`（舊 creep 記憶體過渡期，不要刪）。
+
+---
+
+#### 修改 3：`manager.rcl2ContainerEconomy.js` — spawn zoneBuilder
+
+**3a. 在計算 `populationPlan` 時，把遠端房間的 construction sites 也加進 `remainingBuildWork`：**
+
+找到這段（約 line 684）：
+```javascript
+const populationPlan = population.getPlan(
+  controllerLevel,
+  {
+    ...
+    remainingBuildWork: constructionSites.reduce(
+      function (sum, site) {
+        return sum + Math.max(0, site.progressTotal - site.progress);
+      },
+      0
+    ),
+```
+
+改成（在 `constructionSites.reduce` 之後加入遠端工地的工作量）：
+
+```javascript
+    remainingBuildWork: (function() {
+      var total = constructionSites.reduce(function(sum, site) {
+        return sum + Math.max(0, site.progressTotal - site.progress);
+      }, 0);
+      // 加入可見遠端房間的工地
+      var remoteRooms = colonies.getRemoteRooms(room.name);
+      Object.keys(remoteRooms).forEach(function(remoteRoomName) {
+        var remoteRoom = Game.rooms[remoteRoomName];
+        if (!remoteRoom) return;
+        remoteRoom.find(FIND_CONSTRUCTION_SITES).forEach(function(site) {
+          total += Math.max(0, site.progressTotal - site.progress);
+        });
+      });
+      return total;
+    })(),
+```
+
+注意：需要在檔案頂部加上 `const colonies = require('config.colonies');`（如果還沒有的話）。
+
+**3b. 在 `bootstrap.run()` 最後呼叫（line 886）把 `builderTarget` 設為 0：**
+
+```javascript
+  bootstrap.run(room, {
+    harvesterTarget: effectiveHarvesterTarget,
+    sourceIds: fallbackSourceIds,
+    maintainSupport: true,
+    builderTarget: 0,           // ← 改這行，zoneBuilder 改由下方直接 spawn
+    upgraderWorkTarget: upgraderWorkTarget,
+    bodyBuilder: upgraderBodyBuilder,
+    populationPlan: populationPlan
+  });
+```
+
+**3c. 在上面那段 `bootstrap.run()` 之前，加入 zoneBuilder 的直接 spawn 邏輯：**
+
+```javascript
+  // zoneBuilder: 統一防區 builder（D014）
+  // 永遠至少 1 隻，有大量工地時最多 3 隻
+  var zoneBuilders = creeps.filter(function(c) {
+    return c.memory.role === 'zoneBuilder' || c.memory.role === 'rcl1Builder';
+  });
+  var zoneBuildWork = populationPlan.roles.rcl1Builder
+    ? populationPlan.roles.rcl1Builder.target
+    : 0;
+  var zoneBuilderTarget = Math.max(1, zoneBuildWork); // 至少 1
+  if (zoneBuilders.length < zoneBuilderTarget && !spawn.spawning) {
+    var zbBody = buildWorkerBody(room.energyAvailable, 'rcl1Builder', 1);
+    var zbName = 'zoneBuilder-' + room.name + '-' + Game.time;
+    var zbResult = spawn.spawnCreep(zbBody, zbName, {
+      memory: {
+        role: 'zoneBuilder',
+        homeRoom: room.name,
+        home: room.name,
+        working: false
+      }
+    });
+    if (zbResult === OK) {
+      console.log('[spawn] ' + spawn.name + ' spawning ' + zbName);
+      return;
+    }
+  }
+```
+
+---
+
+#### 修改 4：`manager.remote.js` — 移除 remoteBuilder spawn
+
+找到這段（約 line 1358-1375）：
+```javascript
+    if (
+      builderBody &&
+      miners.length > 0 &&
+      builders.length === 0 &&
+      remoteNeedsBuilder(remoteRoomName, remoteConfig)
+    ) {
+      requests.push({
+        role: 'remoteBuilder',
+        ...
+      });
+    }
+```
+
+**整段刪除**（不要刪除 `builders` 的 count，可以留著或清掉，不影響）。
+
+`remoteNeedsBuilder` 函數也可以刪除（line 967-992），不再使用。
+
+---
+
+#### 修改 5：確認 `manager.rcl1Bootstrap.js` 不受影響
+
+`rcl1Builder` 在 RCL1 bootstrap 時期仍然使用（`manager.rcl1Bootstrap.js` 不改）。`rcl1Builder` creep 記憶體的 creep 仍會被 `role.rcl1Builder.js` 驅動，直到自然死亡後被 `zoneBuilder` 接替。不需要強制 kill 舊 creep。
+
+---
+
+### 驗證清單（修改完後確認）
+
+- [ ] `role.zoneBuilder.js` 存在且語法正確（無 `let`/`const` 在外層迴圈變數 — 避免 Screeps 環境問題）
+- [ ] `main.js` 已加入 `zoneBuilder: roleZoneBuilder`
+- [ ] `manager.rcl2ContainerEconomy.js` 的 `bootstrap.run()` 中 `builderTarget: 0`
+- [ ] `manager.rcl2ContainerEconomy.js` 有 zoneBuilder spawn 區塊
+- [ ] `manager.remote.js` 的 remoteBuilder spawn 已刪除
+- [ ] 舊 `rcl1Builder`/`remoteBuilder` 角色的 creep 仍能正常跑完生命週期（不崩潰）
+
+- **狀態**: 待 DeepSeek 執行
