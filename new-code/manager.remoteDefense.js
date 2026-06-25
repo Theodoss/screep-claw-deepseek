@@ -620,14 +620,15 @@ function getCoreSpawnRequests(homeRoomName) {
     var coreRoom = coreData.roomName;
     var coreLevel = coreData.level || 1;
 
-    var targetMelee = coreLevel >= 3 ? 2 : 1;
+    // Fixed: always 1M + 1R per core. Player adds more via console if needed.
+    var targetMelee = 1;
     var targetRanged = 1;
 
     var counts = countCoreGuards(coreRoom, requests);
     var needMelee = targetMelee - counts.melee;
     var needRanged = targetRanged - counts.ranged;
 
-    // Spawn order: M → R → M (melee first, ranged second, second melee last)
+    // Spawn order: M first, then R
     if (needMelee > 0) {
       requests.push({
         role: 'guard',
@@ -645,7 +646,6 @@ function getCoreSpawnRequests(homeRoomName) {
           coreTargetRoom: coreRoom
         }
       });
-      needMelee--;
       console.log('[defense] core spawn: melee → ' + coreRoom + ' lv' + coreLevel);
     }
 
@@ -665,27 +665,6 @@ function getCoreSpawnRequests(homeRoomName) {
         }
       });
       console.log('[defense] core spawn: ranged → ' + coreRoom + ' lv' + coreLevel);
-    }
-
-    // Second melee for level 3+ (M-R-M order)
-    if (needMelee > 0) {
-      requests.push({
-        role: 'guard',
-        priorityTier: 2,
-        name: 'guard_core2_' + coreRoom.replace('W', '').replace('N', '') + '_' + Game.time,
-        body: meleeBody,
-        bodyCost: meleeCost,
-        memory: {
-          role: 'guard',
-          home: homeRoomName,
-          homeRoom: homeRoomName,
-          defenseGroup: homeRoomName,
-          guardState: 'responding',
-          defenseTargetRoom: coreRoom,
-          coreTargetRoom: coreRoom
-        }
-      });
-      console.log('[defense] core spawn: melee2 → ' + coreRoom + ' lv' + coreLevel);
     }
   }
 
