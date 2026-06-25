@@ -32,8 +32,16 @@ module.exports = {
       return;
     }
 
-    const result = creep.reserveController(controller);
-    if (result === ERR_NOT_IN_RANGE) {
+    // If invaders have reserved the controller, attack it to clear their ticks.
+    // Each CLAIM part removes 300 invader ticks/tick via attackController.
+    const invaderOwned = controller.reservation &&
+                         controller.reservation.username === 'Invader';
+
+    const action = invaderOwned
+      ? creep.attackController(controller)
+      : creep.reserveController(controller);
+
+    if (action === ERR_NOT_IN_RANGE) {
       creep.moveTo(controller, { reusePath: 20 });
     }
   }
