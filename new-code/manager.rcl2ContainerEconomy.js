@@ -4,6 +4,7 @@ const economy = require('manager.economy');
 const population = require('manager.population');
 const support = require('role.support');
 const colonyStates = require('config.colonyStates');
+const colonies = require('config.colonies');
 
 const DISCOVERY_INTERVAL = 50;
 const ENERGY_STARVATION_TICKS = 50;
@@ -643,14 +644,27 @@ function run(room, state) {
     targetCap: haulerTargetCap,
     earlyRcl2Buildout: earlyRcl2Buildout
   };
+  // 計算全防區（母房 + 可見 remote）的剩餘建築工作量（D014）
+  const zoneRemainingBuildWork = (function() {
+    var total = constructionSites.reduce(function(sum, site) {
+      return sum + Math.max(0, site.progressTotal - site.progress);
+    }, 0);
+    var remoteRooms = colonies.getRemoteRooms(room.name);
+    var remoteRoomNames = Object.keys(remoteRooms);
+    for (var rri = 0; rri < remoteRoomNames.length; rri++) {
+      var remoteRoom = Game.rooms[remoteRoomNames[rri]];
+      if (!remoteRoom) continue;
+      var remoteSites = remoteRoom.find(FIND_CONSTRUCTION_SITES);
+      for (var rsi = 0; rsi < remoteSites.length; rsi++) {
+        total += Math.max(0, remoteSites[rsi].progressTotal - remoteSites[rsi].progress);
+      }
+    }
+    return total;
+  })();
+
   const economyState = economy.update(room, {
     constructionCount: constructionSites.length,
-    remainingBuildWork: constructionSites.reduce(
-      function (sum, site) {
-        return sum + Math.max(0, site.progressTotal - site.progress);
-      },
-      0
-    ),
+    remainingBuildWork: zoneRemainingBuildWork,
     energyStarved: state.energyStarved,
     haulersHealthy: haulersHealthy,
     hostilesCount: hostiles.length,
@@ -686,12 +700,7 @@ function run(room, state) {
     {
       roomName: room.name,
       constructionCount: constructionSites.length,
-      remainingBuildWork: constructionSites.reduce(
-        function (sum, site) {
-          return sum + Math.max(0, site.progressTotal - site.progress);
-        },
-        0
-      ),
+      remainingBuildWork: zoneRemainingBuildWork,
       controllerEmergency: !!economyState.controllerEmergency,
       emergencyRepair: emergencyRepair,
       energyStarved: state.energyStarved,
@@ -883,11 +892,36 @@ function run(room, state) {
     effectiveHarvesterTarget = 1;
   }
 
+  // zoneBuilder spawn（D014）：取代 rcl1Builder + remoteBuilder
+  // 永遠至少 1 隻（負責巡邏修路），有大量工地時按 builderPolicy.target 數量
+  if (!spawn.spawning) {
+    var zoneBuilders = creeps.filter(function(c) {
+      return c.memory.role === 'zoneBuilder' || c.memory.role === 'rcl1Builder';
+    });
+    var zoneBuilderTarget = Math.max(1, builderPolicy.target);
+    if (zoneBuilders.length < zoneBuilderTarget) {
+      var zbBody = buildWorkerBody(room.energyAvailable, 'rcl1Builder', 1);
+      var zbName = 'zoneBuilder-' + room.name + '-' + Game.time;
+      var zbResult = spawn.spawnCreep(zbBody, zbName, {
+        memory: {
+          role: 'zoneBuilder',
+          homeRoom: room.name,
+          home: room.name,
+          working: false
+        }
+      });
+      if (zbResult === OK) {
+        console.log('[spawn] ' + spawn.name + ' spawning ' + zbName);
+        return;
+      }
+    }
+  }
+
   bootstrap.run(room, {
     harvesterTarget: effectiveHarvesterTarget,
     sourceIds: fallbackSourceIds,
     maintainSupport: true,
-    builderTarget: builderPolicy.target,
+    builderTarget: 0,
     upgraderWorkTarget: upgraderWorkTarget,
     bodyBuilder: upgraderBodyBuilder,
     populationPlan: populationPlan

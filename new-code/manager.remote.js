@@ -964,32 +964,8 @@ function createSourceRequest(
   };
 }
 
-function remoteNeedsBuilder(remoteRoomName, remoteConfig) {
-  if (!Game.rooms[remoteRoomName]) return false;
-
-  for (let index = 0; index < remoteConfig.sources.length; index++) {
-    const sourceConfig = remoteConfig.sources[index];
-    if (!sourceConfig || sourceConfig.enabled !== true) continue;
-
-    const site = findContainerSiteAt(
-      remoteRoomName,
-      sourceConfig.containerX,
-      sourceConfig.containerY
-    );
-    if (site) return true;
-
-    const container = findContainerAt(
-      remoteRoomName,
-      sourceConfig.containerX,
-      sourceConfig.containerY
-    );
-    if (container && container.hits < container.hitsMax * 0.8) {
-      return true;
-    }
-  }
-
-  return false;
-}
+// remoteNeedsBuilder 已移除（D014）：remoteBuilder 概念廢除，
+// 建築工作由 zoneBuilder 統一處理。
 
 function remoteInfrastructureStable(
   homeRoomName,
@@ -1146,7 +1122,7 @@ function getSpawnRequests(homeRoomName) {
   const energyCapacity = homeRoom.energyCapacityAvailable;
   const minerBody = buildRemoteMinerBody(energyCapacity);
   const haulerBody = buildRemoteHaulerBody(energyCapacity);
-  const builderBody = buildRemoteBuilderBody(energyCapacity);
+  // builderBody 已移除（D014）：zoneBuilder 由母房直接 spawn
   const reserverBody = buildReserverBody(energyCapacity);
 
   // ── Expansion mission (Memory.expansionMission) ──
@@ -1349,30 +1325,7 @@ function getSpawnRequests(homeRoomName) {
       homeRoomName,
       remoteRoomName
     );
-    const builders = getAssignedCreeps(
-      'remoteBuilder',
-      homeRoomName,
-      remoteRoomName
-    );
-
-    if (
-      builderBody &&
-      miners.length > 0 &&
-      builders.length === 0 &&
-      remoteNeedsBuilder(remoteRoomName, remoteConfig)
-    ) {
-      requests.push({
-        role: 'remoteBuilder',
-        name: `remoteBuilder_${remoteRoomName}_${Game.time}`,
-        body: builderBody,
-        memory: {
-          role: 'remoteBuilder',
-          home: homeRoomName,
-          homeRoom: homeRoomName,
-          remoteRoom: remoteRoomName
-        }
-      });
-    }
+    // builders count 已移除（D014）：remoteBuilder 不再 spawn
 
     const stable = remoteInfrastructureStable(
       homeRoomName,

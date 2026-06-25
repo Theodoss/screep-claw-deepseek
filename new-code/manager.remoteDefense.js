@@ -78,6 +78,7 @@ function scanDefenseGroup() {
   var totalInvaders = 0;
   var threatRooms = [];
   var coreRooms = [];
+  var scannedRooms = {}; // track which rooms had vision this tick
 
   // Scan home room
   var homeRoom = Game.rooms[HOME_ROOM];
@@ -126,6 +127,7 @@ function scanDefenseGroup() {
     for (var remoteRoomName in homeConfig.rooms) {
       var room = Game.rooms[remoteRoomName];
       if (!room) continue;
+      scannedRooms[remoteRoomName] = true;
 
       // Invader creeps
       var hostiles = room.find(FIND_HOSTILE_CREEPS);
@@ -168,6 +170,16 @@ function scanDefenseGroup() {
           ticksToDeploy: cores[ck].ticksToDeploy || 0
         });
       }
+    }
+  }
+
+  // Carry forward core entries for rooms without vision this tick.
+  // Only drop a core entry when we have vision AND see no core there.
+  var oldCoreRooms = defense.coreRooms || [];
+  for (var oi = 0; oi < oldCoreRooms.length; oi++) {
+    var oldCore = oldCoreRooms[oi];
+    if (!scannedRooms[oldCore.roomName]) {
+      coreRooms.push(oldCore); // no vision — assume core still there
     }
   }
 
@@ -731,6 +743,18 @@ function manageStandby() {
 
   var standbyPositions = getStandbyPositions(stagingRoom);
   var maxStandby = Math.min(STANDBY_MAX, standbyPositions.length);
+
+  // Restore any core-assigned guards that were incorrectly set to standby.
+  for (var rname in Game.creeps) {
+    var rc = Game.creeps[rname];
+    if (rc.memory.role === 'guard' &&
+        rc.memory.defenseGroup === HOME_ROOM &&
+        rc.memory.coreTargetRoom &&
+        rc.memory.guardState !== 'responding') {
+      rc.memory.guardState = 'responding';
+      rc.memory.defenseTargetRoom = rc.memory.coreTargetRoom;
+    }
+  }
 
   // Collect defense guards — skip core-assigned guards (they have their own mission)
   var guards = [];

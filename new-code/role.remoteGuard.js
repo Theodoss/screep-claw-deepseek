@@ -270,9 +270,13 @@ function run(creep) {
   if (creep.memory.coreTargetRoom) {
     const assignedCore = creep.memory.coreTargetRoom;
     const def = Memory.remoteDefense && Memory.remoteDefense[homeRoom];
-    const coreStillExists = def && def.coreRooms &&
+    const coreInMemory = def && def.coreRooms &&
       def.coreRooms.some(function (c) { return c.roomName === assignedCore; });
-    if (!coreStillExists) {
+    // Only clear if we HAVE vision of that room AND confirmed no core there.
+    // No vision = assume core still exists (coreRooms persists across vision loss).
+    const haveVision = !!Game.rooms[assignedCore];
+    const coreGone = haveVision && !coreInMemory;
+    if (coreGone) {
       delete creep.memory.coreTargetRoom;
     } else {
       if (!inRoomOffEdge(creep, assignedCore)) {
