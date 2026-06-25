@@ -283,10 +283,12 @@ function getFallbackReasons(context) {
   // Scale the threshold to the room's energy capacity so low-RCL rooms
   // aren't permanently trapped in recovery.  RCL2 (cap ~550) → floor 5k;
   // RCL8 (cap ~12900) → cap 50k.
+  // Use cap * 5 (not cap * 10) so RCL3 rooms (cap 800, max ~4800 stored)
+  // can exit recovery at reasonable levels.
   var cap = input.energyCapacityAvailable || 0;
   var recoveryThreshold = Math.max(
     5000,
-    Math.min(50000, cap > 0 ? cap * 10 : 50000)
+    Math.min(50000, cap > 0 ? cap * 5 : 50000)
   );
   if (
     (input.storedEnergy || 0) < recoveryThreshold && (
