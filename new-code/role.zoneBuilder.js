@@ -197,10 +197,20 @@ function getZoneRooms(homeRoom) {
   return rooms;
 }
 
+// Cached work lookup: recompute every 5 ticks to avoid expensive
+// FIND_STRUCTURES scans every tick across all zone rooms.
+var WORK_CACHE_TICKS = 5;
+
 function findWork(creep) {
   var homeRoom = creep.memory.homeRoom;
   var zoneRooms = getZoneRooms(homeRoom);
   var currentRoom = creep.pos.roomName;
+
+  // Use cached result when still valid
+  var cache = creep.memory._zw;
+  if (cache && cache.tick + WORK_CACHE_TICKS >= Game.time && cache.room === currentRoom) {
+    return cache.work;
+  }
 
   // 當前房間優先，其餘按 zoneRooms 順序
   var roomOrder = [currentRoom];
@@ -211,21 +221,32 @@ function findWork(creep) {
   // 1. 緊急修復（任何可見房間）
   for (var ei = 0; ei < roomOrder.length; ei++) {
     var ew = findEmergencyRepairInRoom(creep, roomOrder[ei]);
-    if (ew) return ew;
+    if (ew) {
+      creep.memory._zw = { tick: Game.time, room: currentRoom, work: ew };
+      return ew;
+    }
   }
 
   // 2. 建築工地（當前 → 母房 → remotes）
   for (var ci = 0; ci < roomOrder.length; ci++) {
     var cw = findConstructionInRoom(creep, roomOrder[ci]);
-    if (cw) return cw;
+    if (cw) {
+      creep.memory._zw = { tick: Game.time, room: currentRoom, work: cw };
+      return cw;
+    }
   }
 
   // 3. 道路修復（任何可見防區房間）
   for (var rdi = 0; rdi < roomOrder.length; rdi++) {
     var rw = findRoadRepairInRoom(creep, roomOrder[rdi]);
-    if (rw) return rw;
+    if (rw) {
+      creep.memory._zw = { tick: Game.time, room: currentRoom, work: rw };
+      return rw;
+    }
   }
 
+  // No work: cache null so we don't re-scan
+  creep.memory._zw = { tick: Game.time, room: currentRoom, work: null };
   return null;
 }
 
@@ -289,6 +310,9 @@ module.exports = {
 
     if (result === ERR_NOT_IN_RANGE) {
       creep.moveTo(work.target, { reusePath: 10, visualizePathStyle: { stroke: '#00ff00' } });
+    } else if (result === ERR_INVALID_TARGET) {
+      // Target gone — clear cache so next tick recomputes
+      delete creep.memory._zw;
     }
   }
 };
