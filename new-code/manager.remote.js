@@ -633,7 +633,7 @@ function isHomeEconomyStable(homeRoomName) {
   }
 
   const spawn = getHomeSpawn(room);
-  if (!spawn || spawn.spawning) return false;
+  if (!spawn) return false;
 
   // When stored energy is abundant (>50k), transient extension dips
   // should not pause remote spawning. A 150-energy gap on a 376k
@@ -1123,8 +1123,8 @@ function sortReserverRequests(requests) {
     requests[reserverIndices[k]] = reserverReqs[k];
   }
 
-  // Boost: move highest-priority reserver to front if room has no existing reserver
-  if (!reserverReqs[0].hasExistingReserver) {
+  // Boost: if highest-priority reserver has no reservation, move to front
+  if (reserverReqs[0].reservationTicks <= 0) {
     var topReq = reserverReqs[0];
     var topIdx = -1;
     for (var m = 0; m < requests.length; m++) {
