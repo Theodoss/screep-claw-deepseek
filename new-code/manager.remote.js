@@ -1303,6 +1303,7 @@ function getSpawnRequests(homeRoomName) {
       maintainReservation &&
       controller &&
       reservationLow &&
+      reservers.length <= 1 &&
       !hasHealthyAssignedCreep(reservers, reserverReplacementLead)
     ) {
       requests.push({
