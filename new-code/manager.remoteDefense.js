@@ -732,12 +732,13 @@ function manageStandby() {
   var standbyPositions = getStandbyPositions(stagingRoom);
   var maxStandby = Math.min(STANDBY_MAX, standbyPositions.length);
 
-  // Collect defense guards
+  // Collect defense guards — skip core-assigned guards (they have their own mission)
   var guards = [];
   for (var name in Game.creeps) {
     var c = Game.creeps[name];
     if (c.memory.role === 'guard' &&
-        c.memory.defenseGroup === HOME_ROOM) {
+        c.memory.defenseGroup === HOME_ROOM &&
+        !c.memory.coreTargetRoom) {
       guards.push(c);
     }
   }

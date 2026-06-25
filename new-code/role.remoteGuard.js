@@ -305,16 +305,18 @@ function run(creep) {
     return;
   }
 
-  // 2b. No flagged threat but a core detected → head to nearest core room.
+  // 2b. No flagged threat but a core detected → assign coreTargetRoom and move there.
+  // Persisting coreTargetRoom prevents oscillation when vision of core room flickers.
+  // Once set, step 1c handles subsequent ticks without re-evaluating.
   const coreRoom = findCoreRoom(creep, homeRoom);
   if (coreRoom) {
+    creep.memory.coreTargetRoom = coreRoom;
     if (!inRoomOffEdge(creep, coreRoom)) {
       goTo(creep, coreRoom);
       creep.memory.task = 'toCoreRoom:' + coreRoom;
       if (creep.hits < creep.hitsMax) creep.heal(creep);
       return;
     }
-    // Arrived — attackCore() above will handle it next tick
     creep.memory.task = 'atCoreRoom:' + coreRoom;
     if (creep.hits < creep.hitsMax) creep.heal(creep);
     return;
