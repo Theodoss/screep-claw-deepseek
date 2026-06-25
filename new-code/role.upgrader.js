@@ -218,9 +218,9 @@ module.exports = {
       }
     }
 
-    // Priority 4: Upgrade containers
+    // Priority 4: Upgrade containers (RCL≥3 only — RCL1-2 use spawn/ext below)
     var upgradeContainers = economy.getUpgradeContainers(creep.room);
-    if (!economyState.recovery && upgradeContainers.length > 0) {
+    if (!economyState.recovery && creep.room.controller && creep.room.controller.level >= 3 && upgradeContainers.length > 0) {
       var selected = upgradeContainers[0];
       for (var i = 1; i < upgradeContainers.length; i++) {
         if (
