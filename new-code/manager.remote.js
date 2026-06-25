@@ -866,6 +866,70 @@ function getAssignedCreeps(
   return assigned;
 }
 
+// ── Reserver helpers (per-room based, not global) ──
+
+var RESERVER_REPLACEMENT_TTL = 100;
+var RESERVER_RESERVATION_TRIGGER = 3000;
+
+function isReserverAssignedToRoom(creep, remoteRoomName) {
+  if (!creep || creep.memory.role !== 'reserver') return false;
+
+  return (
+    creep.memory.remoteRoom === remoteRoomName ||
+    creep.memory.remote === remoteRoomName ||
+    creep.memory.targetRoom === remoteRoomName ||
+    creep.name.indexOf(remoteRoomName) !== -1
+  );
+}
+
+function isReserverSpawningForRoom(remoteRoomName) {
+  for (var spawnName in Game.spawns) {
+    var spawn = Game.spawns[spawnName];
+    if (!spawn.spawning) continue;
+    var name = spawn.spawning.name;
+    if (name.indexOf('reserver') !== -1 &&
+        name.indexOf(remoteRoomName) !== -1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getReserversForRoom(remoteRoomName) {
+  var assigned = [];
+  for (var name in Game.creeps) {
+    var creep = Game.creeps[name];
+    if (isReserverAssignedToRoom(creep, remoteRoomName)) {
+      assigned.push(creep);
+    }
+  }
+  return assigned;
+}
+
+function getHealthyReserver(reservers) {
+  for (var i = 0; i < reservers.length; i++) {
+    if (reservers[i].ticksToLive > RESERVER_REPLACEMENT_TTL) {
+      return reservers[i];
+    }
+  }
+  return null;
+}
+
+function getExpiringReserver(reservers) {
+  for (var i = 0; i < reservers.length; i++) {
+    if (reservers[i].ticksToLive <= RESERVER_REPLACEMENT_TTL) {
+      return reservers[i];
+    }
+  }
+  return null;
+}
+
+function getReservationTicks(controller) {
+  if (!controller) return 0;
+  if (!controller.reservation) return 0;
+  return controller.reservation.ticksToEnd;
+}
+
 function hasHealthyAssignedCreep(creeps, replacementLead) {
   for (let index = 0; index < creeps.length; index++) {
     if (
@@ -1011,6 +1075,47 @@ function countClaimers(targetRoomName) {
     }
   }
   return count;
+}
+
+function sortReserverRequests(requests) {
+  var reserverReqs = [];
+  var otherReqs = [];
+  for (var i = 0; i < requests.length; i++) {
+    if (requests[i].role === 'reserver') {
+      reserverReqs.push(requests[i]);
+    } else {
+      otherReqs.push(requests[i]);
+    }
+  }
+
+  reserverReqs.sort(function (a, b) {
+    var aNoRes = a.reservationTicks <= 0;
+    var bNoRes = b.reservationTicks <= 0;
+
+    if (aNoRes !== bNoRes) return aNoRes ? -1 : 1;
+
+    if (a.hasExistingReserver !== b.hasExistingReserver) {
+      return a.hasExistingReserver ? 1 : -1;
+    }
+
+    if (a.reservationTicks !== b.reservationTicks) {
+      return a.reservationTicks - b.reservationTicks;
+    }
+
+    if (a.lowestReserverTTL !== b.lowestReserverTTL) {
+      return a.lowestReserverTTL - b.lowestReserverTTL;
+    }
+
+    if (a.remoteRoom && b.remoteRoom) {
+      return a.remoteRoom.localeCompare(b.remoteRoom);
+    }
+    return 0;
+  });
+
+  // Replace in-place: other requests first, then sorted reserver requests
+  requests.length = 0;
+  for (var j = 0; j < otherReqs.length; j++) requests.push(otherReqs[j]);
+  for (var k = 0; k < reserverReqs.length; k++) requests.push(reserverReqs[k]);
 }
 
 function getSpawnRequests(homeRoomName) {
@@ -1267,47 +1372,59 @@ function getSpawnRequests(homeRoomName) {
 
     const remoteRoom = Game.rooms[remoteRoomName];
     const controller = remoteRoom ? remoteRoom.controller : null;
-    const reserverLead = reserverBody
-      ? getReserverLeadTicks(homeRoomName, remoteRoomName, reserverBody)
-      : 0;
-    // Reservation is our FIRST line of invader defense: NPC invaders only
-    // spawn at exits to neutral rooms, so a continuously-reserved remote
-    // never spawns them (DECISIONS D012). React early with a wide margin so
-    // reservation never lapses to 0 between reserver deaths + travel time.
-    const reserveThreshold = Math.max(1500, reserverLead + 400);
-    const reservationLow = !!(
-      controller &&
-      (
-        !controller.reservation ||
-        controller.reservation.ticksToEnd < reserveThreshold
-      )
-    );
-    const reservers = getAssignedCreeps(
-      'reserver',
-      homeRoomName,
-      remoteRoomName
-    );
-    // Healthy if alive long enough to travel + stay a while
-    const reserverReplacementLead = reserverLead + 300;
-    // Maintain reservation whenever we're actively mining here (a miner is
-    // assigned) — not only when the full container economy is "stable". A
-    // transient infra dip must not let reservation lapse and invite invaders.
+
+    // ── Per-room reserver check ──
+    const reservationTicks = getReservationTicks(controller);
+    const assignedReservers = getReserversForRoom(remoteRoomName);
+    const healthyReserver = getHealthyReserver(assignedReservers);
+    const expiringReserver = getExpiringReserver(assignedReservers);
+    const spawningReserver = isReserverSpawningForRoom(remoteRoomName);
+
+    // Maintain reservation when stable or we have miners assigned
     const reserveMiners = getAssignedCreeps(
       'remoteMiner',
       homeRoomName,
       remoteRoomName
     );
     const maintainReservation = stable || reserveMiners.length > 0;
-    if (
+
+    const shouldSpawnReserver =
       reserverBody &&
       maintainReservation &&
-      controller &&
-      reservationLow &&
-      reservers.length <= 1 &&
-      !hasHealthyAssignedCreep(reservers, reserverReplacementLead)
-    ) {
+      reservationTicks < RESERVER_RESERVATION_TRIGGER &&
+      !healthyReserver &&
+      !spawningReserver;
+
+    // ── Debug log ──
+    if (Memory.debugRemoteReserver && Game.time % 25 === 0) {
+      console.log(
+        '[reserver-check] room=' + remoteRoomName +
+        ' stable=' + stable +
+        ' hasMiner=' + (reserveMiners.length > 0) +
+        ' maintain=' + maintainReservation +
+        ' reservation=' + reservationTicks +
+        ' assigned=' + assignedReservers.length +
+        ' healthy=' + (healthyReserver ? healthyReserver.ticksToLive : 0) +
+        ' expiring=' + (expiringReserver ? expiringReserver.ticksToLive : 0) +
+        ' spawning=' + spawningReserver +
+        ' shouldSpawn=' + shouldSpawnReserver
+      );
+    }
+
+    if (shouldSpawnReserver) {
+      var lowestTTL = 0;
+      for (var ri = 0; ri < assignedReservers.length; ri++) {
+        if (assignedReservers[ri].ticksToLive < lowestTTL || lowestTTL === 0) {
+          lowestTTL = assignedReservers[ri].ticksToLive;
+        }
+      }
+
       requests.push({
         role: 'reserver',
+        remoteRoom: remoteRoomName,
+        reservationTicks: reservationTicks,
+        hasExistingReserver: assignedReservers.length > 0,
+        lowestReserverTTL: lowestTTL,
         name: `reserver_${remoteRoomName}_${Game.time}`,
         body: reserverBody,
         memory: {
@@ -1317,6 +1434,24 @@ function getSpawnRequests(homeRoomName) {
           remoteRoom: remoteRoomName
         }
       });
+    }
+  }
+
+  // ── Sort reserver requests: priority = no reservation > no existing reserver > lowest reservation > lowest TTL ──
+  sortReserverRequests(requests);
+
+  // ── Debug: log sorted reserver requests ──
+  if (Memory.debugRemoteReserver && Game.time % 25 === 0) {
+    for (var ri2 = 0; ri2 < requests.length; ri2++) {
+      var r = requests[ri2];
+      if (r.role === 'reserver') {
+        console.log(
+          '[reserver-requests] ' + r.remoteRoom +
+          ' reservation=' + r.reservationTicks +
+          ' hasExisting=' + r.hasExistingReserver +
+          ' lowestTTL=' + r.lowestReserverTTL
+        );
+      }
     }
   }
 

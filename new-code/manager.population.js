@@ -450,7 +450,7 @@ function getPlan(rcl, context) {
     ),
     reserver: createRole(
       remoteRoomCount * config.reserverPerRemote,
-      remoteRoomCount * config.reserverPerRemote
+      remoteRoomCount * config.reserverPerRemote + 1
     ),
     remoteMiner: createRole(
       remoteSourceCount * config.remoteMinerPerSource,
