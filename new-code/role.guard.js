@@ -175,7 +175,38 @@ function runResponding(creep) {
     return;
   }
 
-  runAttack(creep);
+  // In target room — check if anything actually needs attacking
+  tryHeal(creep);
+  var invader = findInvaderTarget(creep);
+  if (invader) { attackTarget(creep, invader); return; }
+  var hostile = findAnyHostileCreep(creep);
+  if (hostile) { attackTarget(creep, hostile); return; }
+  var structure = findStructureTarget(creep);
+  if (structure) { attackTarget(creep, structure); return; }
+
+  // Nothing hostile in target room — check defense memory for active threats
+  var def = Memory.remoteDefense && Memory.remoteDefense[creep.memory.home || creep.memory.homeRoom];
+  if (def && def.threatRooms && def.threatRooms.length > 0) {
+    // Redirect to nearest threat room
+    var nearest = null;
+    var nearestDist = Infinity;
+    for (var i = 0; i < def.threatRooms.length; i++) {
+      var tr = def.threatRooms[i];
+      var dist = Game.map.getRoomLinearDistance(creep.room.name, tr.roomName);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = tr.roomName;
+      }
+    }
+    if (nearest && nearest !== targetRoom) {
+      creep.memory.defenseTargetRoom = nearest;
+      creep.memory.task = 'redirect:threat:' + nearest;
+      return;
+    }
+  }
+
+  // No threats anywhere — go to standby
+  creep.memory.guardState = 'standby';
 }
 
 module.exports = {
