@@ -179,8 +179,14 @@ module.exports = {
           creep.moveTo(selected, {
             visualizePathStyle: { stroke: '#ffaa00' }
           });
+          return;
         }
-        return;
+        // Only return if we actually got energy; otherwise fall through to
+        // spawn / storage so the upgrader doesn't get stuck when the
+        // container is drained between our check and withdraw.
+        if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+          return;
+        }
       }
     }
 
