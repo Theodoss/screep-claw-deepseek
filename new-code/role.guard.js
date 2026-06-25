@@ -1,148 +1,53 @@
-const ROUTE_CORRIDOR_TOLERANCE = 2;
-const IMMEDIATE_THREAT_RANGE = 3;
-const LEGACY_STANDBY_X = 12;
-const LEGACY_STANDBY_Y = 4;
+/**
+ * role.guard.js — Defense guard
+ *
+ * States: responding, standby, recycle
+ * Priorities: Invader creep > hostile structure (including cores) > standby
+ */
 
-function getMissionTarget(creep) {
-  if (
-    !creep.memory.attackCreep ||
-    !Memory.military ||
-    Memory.military.enabled !== true
-  ) {
-    return null;
-  }
-
-  const military = Memory.military || {};
-  const configured = creep.memory.targetPos || military.targetPos;
-  const roomName =
-    (configured && configured.roomName) ||
-    creep.memory.targetRoom ||
-    military.targetRoom;
-
-  if (!roomName) return null;
-
-  return new RoomPosition(
-    configured && Number.isInteger(configured.x) ? configured.x : 25,
-    configured && Number.isInteger(configured.y) ? configured.y : 25,
-    roomName
-  );
-}
-
-function isOnMissionRoute(creep, hostile, missionTarget) {
-  if (!hostile || !hostile.pos) return false;
-  if (hostile.pos.roomName !== creep.room.name) return false;
-
-  if (missionTarget.roomName !== creep.room.name) {
-    return true;
-  }
-
-  const creepToHostile = creep.pos.getRangeTo(hostile);
-  if (creepToHostile <= IMMEDIATE_THREAT_RANGE) return true;
-
-  const creepToTarget = creep.pos.getRangeTo(missionTarget);
-  const hostileToTarget = hostile.pos.getRangeTo(missionTarget);
-
-  return (
-    creepToHostile + hostileToTarget <=
-    creepToTarget + ROUTE_CORRIDOR_TOLERANCE
-  );
-}
-
-function getLockedTarget(creep, missionTarget) {
-  const targetId = creep.memory.combatTargetId;
-  if (!targetId) return null;
-
-  const target = Game.getObjectById(targetId);
-  if (
-    target &&
-    target.room &&
-    target.room.name === creep.room.name &&
-    isOnMissionRoute(creep, target, missionTarget)
-  ) {
-    return target;
-  }
-
-  delete creep.memory.combatTargetId;
-  return null;
-}
-
-function findMissionTarget(creep, missionTarget) {
-  const locked = getLockedTarget(creep, missionTarget);
-  if (locked) return locked;
-
-  const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
-  const candidates = hostiles.filter(function (hostile) {
-    return isOnMissionRoute(creep, hostile, missionTarget);
-  });
-
-  if (candidates.length === 0) return null;
-
-  const target =
-    creep.pos.findClosestByPath(candidates) ||
-    creep.pos.findClosestByRange(candidates) ||
-    candidates[0];
-
-  creep.memory.combatTargetId = target.id;
-  return target;
-}
-
-function tryHeal(creep) {
-  if (creep.getActiveBodyparts(HEAL) === 0) return false;
-
-  if (creep.hits < creep.hitsMax) {
-    creep.heal(creep);
-    return true;
-  }
-
-  const damagedAllies = creep.pos.findInRange(FIND_MY_CREEPS, 3, {
-    filter: function (c) {
-      return c.id !== creep.id && c.hits < c.hitsMax;
-    }
-  });
-
-  if (damagedAllies.length > 0) {
-    const ally = creep.pos.findClosestByRange(damagedAllies);
-    if (ally) {
-      if (creep.pos.getRangeTo(ally) <= 1) {
-        creep.heal(ally);
-      } else {
-        creep.rangedHeal(ally);
-      }
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function attackMissionTarget(creep, target) {
-  tryHeal(creep);
-
-  var result = creep.attack(target);
-
-  if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(target, {
-      reusePath: 2,
-      maxRooms: 1,
-      visualizePathStyle: { stroke: '#ff0000' }
-    });
-  }
-}
-
-const ATTACK_STRUCTURES = [
-  STRUCTURE_SPAWN,
-  STRUCTURE_TOWER,
-  STRUCTURE_EXTENSION,
-  STRUCTURE_STORAGE,
-  STRUCTURE_LINK,
-  STRUCTURE_LAB,
-  STRUCTURE_TERMINAL,
-  STRUCTURE_FACTORY,
-  STRUCTURE_NUKER,
-  STRUCTURE_POWER_SPAWN
+var defense = require('manager.remoteDefense');
+var ATTACK_STRUCTURES = [
+  STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
+  STRUCTURE_STORAGE, STRUCTURE_LINK, STRUCTURE_LAB,
+  STRUCTURE_TERMINAL, STRUCTURE_FACTORY, STRUCTURE_NUKER,
+  STRUCTURE_POWER_SPAWN, STRUCTURE_INVADER_CORE
 ];
 
-function findAnyHostile(creep) {
+var lastWarning = {};
+
+function logRateLimited(key, message) {
+  if (!lastWarning[key] || Game.time - lastWarning[key] > 100) {
+    lastWarning[key] = Game.time;
+    console.log(message);
+  }
+}
+
+// ── Threat scoring (by active body parts) ──
+
+function getInvaderThreatScore(creep) {
+  return (
+    creep.getActiveBodyparts(HEAL) * 30 +
+    creep.getActiveBodyparts(RANGED_ATTACK) * 20 +
+    creep.getActiveBodyparts(ATTACK) * 15 +
+    creep.getActiveBodyparts(WORK) * 5
+  );
+}
+
+function findInvaderTarget(creep) {
+  var hostiles = creep.room.find(FIND_HOSTILE_CREEPS, {
+    filter: function (c) {
+      return c.owner && c.owner.username === 'Invader';
+    }
+  });
+  if (hostiles.length === 0) return null;
+
+  hostiles.sort(function (a, b) {
+    return getInvaderThreatScore(b) - getInvaderThreatScore(a);
+  });
+  return hostiles[0];
+}
+
+function findAnyHostileCreep(creep) {
   var hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
   if (hostiles.length === 0) return null;
   return creep.pos.findClosestByRange(hostiles) || hostiles[0];
@@ -154,156 +59,152 @@ function findStructureTarget(creep) {
       return ATTACK_STRUCTURES.indexOf(s.structureType) !== -1;
     }
   });
-
   if (all.length === 0) return null;
 
+  // Prioritize invader cores, then by structure type order
   all.sort(function (a, b) {
+    if (a.structureType === STRUCTURE_INVADER_CORE &&
+        b.structureType !== STRUCTURE_INVADER_CORE) return -1;
+    if (b.structureType === STRUCTURE_INVADER_CORE &&
+        a.structureType !== STRUCTURE_INVADER_CORE) return 1;
     return ATTACK_STRUCTURES.indexOf(a.structureType) -
-      ATTACK_STRUCTURES.indexOf(b.structureType);
+           ATTACK_STRUCTURES.indexOf(b.structureType);
   });
-
   return creep.pos.findClosestByRange(all) || all[0];
 }
 
-function runAttackMission(creep, missionTarget) {
-  tryHeal(creep);
+// ── Heal logic ──
 
-  var hostile = findAnyHostile(creep);
-  if (hostile) {
-    attackMissionTarget(creep, hostile);
-    return;
+function tryHeal(creep) {
+  if (creep.getActiveBodyparts(HEAL) === 0) return false;
+
+  if (creep.hits < creep.hitsMax) {
+    creep.heal(creep);
+    return true;
   }
 
-  var structure = findStructureTarget(creep);
-  if (structure) {
-    attackMissionTarget(creep, structure);
-    return;
+  // Heal nearby damaged guards
+  var damagedAllies = creep.pos.findInRange(FIND_MY_CREEPS, 1, {
+    filter: function (c) {
+      return c.id !== creep.id && c.hits < c.hitsMax &&
+             c.memory.role === 'guard';
+    }
+  });
+  if (damagedAllies.length > 0) {
+    creep.heal(damagedAllies[0]);
+    return true;
   }
 
-  delete creep.memory.combatTargetId;
-
-  if (
-    creep.room.name !== missionTarget.roomName ||
-    creep.pos.getRangeTo(missionTarget) > 1
-  ) {
-    creep.moveTo(missionTarget, {
-      range: 1,
-      reusePath: 5,
-      visualizePathStyle: { stroke: '#ff0000' }
-    });
+  // Ranged heal
+  var rangedAllies = creep.pos.findInRange(FIND_MY_CREEPS, 3, {
+    filter: function (c) {
+      return c.id !== creep.id && c.hits < c.hitsMax &&
+             c.memory.role === 'guard';
+    }
+  });
+  if (rangedAllies.length > 0) {
+    creep.rangedHeal(creep.pos.findClosestByRange(rangedAllies));
+    return true;
   }
+
+  return false;
 }
 
-function runDefense(creep) {
-  if (tryHeal(creep)) return;
+// ── Combat ──
 
-  var target = creep.pos.findClosestByPath(FIND_HOSTILE_CREEPS);
-  if (target) {
-    if (tryHeal(creep)) return;
+function attackTarget(creep, target) {
+  if (creep.getActiveBodyparts(RANGED_ATTACK) > 0 &&
+      creep.pos.getRangeTo(target) <= 3 &&
+      creep.pos.getRangeTo(target) > 1) {
+    creep.rangedAttack(target);
+    return;
+  }
+
+  if (creep.getActiveBodyparts(ATTACK) > 0) {
     var result = creep.attack(target);
     if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(target, {
-        reusePath: 2,
-        visualizePathStyle: { stroke: '#ff0000' }
-      });
+      creep.moveTo(target, { reusePath: 2, maxRooms: 1 });
     }
-    return;
-  }
-
-  var structure = findStructureTarget(creep);
-  if (structure) {
-    var sresult = creep.attack(structure);
-    if (sresult === ERR_NOT_IN_RANGE) {
-      creep.moveTo(structure, {
-        reusePath: 2,
-        maxRooms: 1,
-        visualizePathStyle: { stroke: '#ff0000' }
-      });
-    }
-    return;
-  }
-
-  var spawns = creep.room.find(FIND_MY_SPAWNS);
-  var post = spawns[0] || creep.room.controller;
-  if (post && creep.pos.getRangeTo(post) > 3) {
-    creep.moveTo(post, {
-      range: 3,
-      reusePath: 10,
-      visualizePathStyle: { stroke: '#ff0000' }
-    });
+  } else if (creep.pos.getRangeTo(target) > 1) {
+    // No attack parts but hostile — move closer anyway
+    creep.moveTo(target, { reusePath: 2, maxRooms: 1 });
   }
 }
 
-function retireAttackCreep(creep) {
-  const homeRoom = creep.memory.home;
-  if (!homeRoom) return;
+// ── Main guard logic ──
 
-  creep.memory.task = 'standby:legacy-attack';
+function runAttack(creep) {
+  // Heal first (parallel with attack in same tick)
+  tryHeal(creep);
 
-  if (creep.room.name !== homeRoom) {
-    const exitDirection = creep.room.findExitTo(homeRoom);
-    if (exitDirection < 0) return;
+  // Find targets
+  var invader = findInvaderTarget(creep);
+  if (invader) {
+    attackTarget(creep, invader);
+    return;
+  }
 
-    const exit =
-      creep.pos.findClosestByPath(exitDirection) ||
-      creep.pos.findClosestByRange(exitDirection);
-    if (!exit) return;
+  // Any hostile creep
+  var hostile = findAnyHostileCreep(creep);
+  if (hostile) {
+    attackTarget(creep, hostile);
+    return;
+  }
 
-    if (creep.pos.isEqualTo(exit)) {
-      creep.move(exitDirection);
-      return;
-    }
+  // Hostile structures (including invader cores)
+  var structure = findStructureTarget(creep);
+  if (structure) {
+    attackTarget(creep, structure);
+    return;
+  }
+}
 
-    creep.moveTo(exit, {
-      range: 0,
-      reusePath: 3,
-      maxRooms: 1,
-      visualizePathStyle: { stroke: '#00ffff' }
+function runResponding(creep) {
+  var targetRoom = creep.memory.defenseTargetRoom;
+
+  if (!targetRoom) {
+    // No target — go standby
+    creep.memory.guardState = 'standby';
+    return;
+  }
+
+  if (creep.room.name !== targetRoom) {
+    creep.moveTo(new RoomPosition(25, 25, targetRoom), {
+      reusePath: 20
     });
     return;
   }
 
-  const standby = new RoomPosition(
-    LEGACY_STANDBY_X,
-    LEGACY_STANDBY_Y,
-    homeRoom
-  );
-  if (creep.pos.getRangeTo(standby) <= 2) return;
-
-  creep.moveTo(standby, {
-    range: 2,
-    reusePath: 5,
-    visualizePathStyle: { stroke: '#00ffff' }
-  });
+  runAttack(creep);
 }
 
 module.exports = {
   run: function (creep) {
-    if (creep.memory.forceMission && creep.memory.targetRoom) {
-      const targetPos = new RoomPosition(25, 25, creep.memory.targetRoom);
-      runAttackMission(creep, targetPos);
+    // Handle recycle state
+    if (creep.memory.guardState === 'recycle') {
+      defense.runGuardRecycle(creep);
       return;
     }
 
-    if (
-      creep.memory.attackCreep &&
-      (
-        !Memory.military ||
-        Memory.military.enabled !== true ||
-        Memory.military.version >= 2
-      )
-    ) {
-      delete creep.memory.combatTargetId;
-      retireAttackCreep(creep);
+    // Handle standby state
+    if (creep.memory.guardState === 'standby') {
+      defense.runGuardStandby(creep);
       return;
     }
 
-    const missionTarget = getMissionTarget(creep);
-    if (missionTarget) {
-      runAttackMission(creep, missionTarget);
+    // Responding: go to target room and fight
+    if (creep.memory.guardState === 'responding') {
+      runResponding(creep);
       return;
     }
 
-    runDefense(creep);
+    // Default: if defense mode active, fight
+    if (defense.isDefenseModeActive()) {
+      runAttack(creep);
+      return;
+    }
+
+    // Fallback: standby
+    defense.runGuardStandby(creep);
   }
 };

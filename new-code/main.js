@@ -441,17 +441,28 @@ module.exports.loop = function () {
     errorReporter.capture(err, { module: 'manager.link' });
   }
 
-  // 4. Remote spawning
+  // 4. Defense scan + remote spawning (tier-based)
   try {
     cpuProfiler.measure('manager.remoteDefense.run', function () {
       remoteDefense.run();
     });
-    cpuProfiler.measure('manager.remote.run', function () {
-      remote.run();
-    });
 
+    // Tier 3 gating: pause remote spawning during Defense Mode
+    if (!remoteDefense.shouldPauseTier3()) {
+      cpuProfiler.measure('manager.remote.run', function () {
+        remote.run();
+      });
+    }
+
+    // Tier 2: Defense guard spawning (highest non-critical priority)
     cpuProfiler.measure('manager.remoteDefense.spawn', function () {
-      const defenseRequests = remoteDefense.getAllSpawnRequests('W49N25');
+      const defenseRequests = remoteDefense.getDefenseRequests(
+        'W49N25',
+        Object.values(Game.creeps).filter(function (c) {
+          return c.memory.role === 'guard' &&
+            c.memory.defenseGroup === 'W49N25';
+        }).length
+      );
       if (defenseRequests.length > 0) {
         const homeRoom = Game.rooms['W49N25'];
         if (homeRoom) {

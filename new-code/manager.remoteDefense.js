@@ -1,269 +1,641 @@
-// Remote room automated defense for NPC Invaders.
-// RCL5+ with multiple remotes: detect → retreat → dispatch guard → clear → restore.
+/**
+ * manager.remoteDefense.js — Unified Defense Group manager
+ *
+ * W49N25 Defense Group: W49N25, W48N25, W48N26, W49N26
+ *
+ * Tiers:
+ *   Tier 1 — home critical economy (miner, hauler, balancer)
+ *   Tier 2 — defense guard
+ *   Tier 3 — normal + remote production (paused during Defense Mode)
+ *
+ * Invader Core is NOT part of Defense Mode — it's a background task.
+ */
 
-const HOME_ROOM = 'W49N25';
-const CLEAR_TICKS = 50;           // consecutive ticks without hostiles before clearing threat
-const MAX_GUARDS_GLOBAL = 2;      // never more than 2 remoteGuards across all remotes
-const MAX_GUARDS_PER_ROOM = 1;    // never more than 1 guard per remote room
-const REPLACEMENT_TTL = 300;      // dispatch replacement when garrisoned guard TTL < this
-const DETECT_INTERVAL = 5;        // check remote rooms every 5 ticks
-const THREAT_TIMEOUT = 300;       // expire a threat we haven't re-confirmed for this long
-                                  // (no vision → scanRemoteRoom can't clear it; this
-                                  // backstop prevents permanent pause / stuck haulers)
+var HOME_ROOM = 'W49N25';
+var CANCEL_EARLY_TICKS = 20;
+var CLEAR_CONFIRMATION_TICKS = 3;
+var THREAT_TIMEOUT = 300;
+var STANDBY_MAX = 4;
+
+// ── Tier classification ──
+
+function isHomeCriticalRole(role, memory) {
+  if (role === 'rcl2Miner' || role === 'rcl2Hauler') {
+    return (memory.home || memory.homeRoom) === HOME_ROOM;
+  }
+  if (role === 'storageLinkBalancer' || role === 'doorLinkBalancer') {
+    return true;
+  }
+  return false;
+}
+
+function isTier3Role(role) {
+  if (role === 'remoteMiner' || role === 'remoteHauler' ||
+      role === 'reserver' || role === 'remoteBuilder' ||
+      role === 'rcl1Builder' || role === 'upgrader' ||
+      role === 'rcl1Upgrader' || role === 'pioneer' ||
+      role === 'claimer' || role === 'scout' ||
+      role === 'remoteGuard') {
+    return true;
+  }
+  return false;
+}
+
+// ── Memory initialization ──
+
+function getDefenseMemory() {
+  if (!Memory.remoteDefense) {
+    Memory.remoteDefense = {};
+  }
+  if (!Memory.remoteDefense[HOME_ROOM]) {
+    Memory.remoteDefense[HOME_ROOM] = {
+      active: false,
+      invaderCount: 0,
+      requiredGuards: 0,
+      clearTicks: 0,
+      threatRooms: [],
+      coreRooms: [],
+      stagingRoom: null,
+      assignmentVersion: 0,
+      lastLogSignature: null
+    };
+  }
+  return Memory.remoteDefense[HOME_ROOM];
+}
 
 function getHomeConfig() {
   if (!Memory.remote || !Memory.remote[HOME_ROOM]) return null;
   return Memory.remote[HOME_ROOM];
 }
 
-function scanRemoteRoom(roomName, remoteConfig) {
-  const room = Game.rooms[roomName];
-  if (!room) return;
+// ── Threat scanning ──
 
-  const hostiles = room.find(FIND_HOSTILE_CREEPS);
-  if (hostiles.length === 0) {
-    // No hostiles — count clear ticks for threat expiry
-    if (remoteConfig.threat) {
-      remoteConfig.threat.clearTicks = (remoteConfig.threat.clearTicks || 0) + 1;
-      if (remoteConfig.threat.clearTicks >= CLEAR_TICKS) {
-        delete remoteConfig.threat;
-        console.log('[defense] threat cleared in ' + roomName);
+function scanDefenseGroup() {
+  var defense = getDefenseMemory();
+  var homeConfig = getHomeConfig();
+  if (!homeConfig) return;
+
+  var totalInvaders = 0;
+  var threatRooms = [];
+  var coreRooms = [];
+
+  // Scan home room
+  var homeRoom = Game.rooms[HOME_ROOM];
+  if (homeRoom) {
+    var homeHostiles = homeRoom.find(FIND_HOSTILE_CREEPS);
+    var homeInvaders = 0;
+    for (var i = 0; i < homeHostiles.length; i++) {
+      if (homeHostiles[i].owner &&
+          homeHostiles[i].owner.username === 'Invader') {
+        homeInvaders++;
       }
     }
-    return;
-  }
+    if (homeInvaders > 0) {
+      var friendlyCreeps = homeRoom.find(FIND_MY_CREEPS);
+      var damaged = 0;
+      for (var j = 0; j < friendlyCreeps.length; j++) {
+        if (friendlyCreeps[j].hits < friendlyCreeps[j].hitsMax) damaged++;
+      }
+      threatRooms.push({
+        roomName: HOME_ROOM,
+        invaderCount: homeInvaders,
+        friendlyCreepsPresent: friendlyCreeps.length,
+        friendlyCreepsDamaged: damaged,
+        lastSeenThreatTick: Game.time
+      });
+      totalInvaders += homeInvaders;
+    }
 
-  // Fresh hostiles — reset clear counter and classify
-  const invaders = [];
-  const players = [];
-
-  for (let i = 0; i < hostiles.length; i++) {
-    const c = hostiles[i];
-    if (c.owner && c.owner.username === 'Invader') {
-      invaders.push(c);
-    } else {
-      players.push(c);
+    var homeCores = homeRoom.find(FIND_HOSTILE_STRUCTURES, {
+      filter: function (s) {
+        return s.structureType === STRUCTURE_INVADER_CORE;
+      }
+    });
+    for (var k = 0; k < homeCores.length; k++) {
+      coreRooms.push({
+        roomName: HOME_ROOM,
+        coreId: homeCores[k].id,
+        level: homeCores[k].level || 0,
+        ticksToDeploy: homeCores[k].ticksToDeploy || 0
+      });
     }
   }
 
-  if (invaders.length > 0) {
-    remoteConfig.threat = {
-      type: 'invader',
-      since: remoteConfig.threat ? (remoteConfig.threat.since || Game.time) : Game.time,
-      lastSeen: Game.time,
-      hostileCount: invaders.length,
-      username: null,
-      clearTicks: 0
-    };
-  } else if (players.length > 0) {
-    const prevType = remoteConfig.threat ? remoteConfig.threat.type : null;
-    remoteConfig.threat = {
-      type: 'player',
-      since: remoteConfig.threat ? (remoteConfig.threat.since || Game.time) : Game.time,
-      lastSeen: Game.time,
-      hostileCount: players.length,
-      username: players[0].owner.username,
-      clearTicks: 0
-    };
-    if (prevType !== 'player') {
-      console.log('[defense] player threat in ' + roomName + ': ' + players[0].owner.username);
+  // Scan remote rooms
+  if (homeConfig.rooms) {
+    for (var remoteRoomName in homeConfig.rooms) {
+      var room = Game.rooms[remoteRoomName];
+      if (!room) continue;
+
+      // Invader creeps
+      var hostiles = room.find(FIND_HOSTILE_CREEPS);
+      var invaderCount = 0;
+      for (var ri = 0; ri < hostiles.length; ri++) {
+        if (hostiles[ri].owner &&
+            hostiles[ri].owner.username === 'Invader') {
+          invaderCount++;
+        }
+      }
+      if (invaderCount > 0) {
+        var remoteFriendly = room.find(FIND_MY_CREEPS);
+        var remoteDamaged = 0;
+        for (var rj = 0; rj < remoteFriendly.length; rj++) {
+          if (remoteFriendly[rj].hits < remoteFriendly[rj].hitsMax) {
+            remoteDamaged++;
+          }
+        }
+        threatRooms.push({
+          roomName: remoteRoomName,
+          invaderCount: invaderCount,
+          friendlyCreepsPresent: remoteFriendly.length,
+          friendlyCreepsDamaged: remoteDamaged,
+          lastSeenThreatTick: Game.time
+        });
+        totalInvaders += invaderCount;
+      }
+
+      // Invader Cores
+      var cores = room.find(FIND_HOSTILE_STRUCTURES, {
+        filter: function (s) {
+          return s.structureType === STRUCTURE_INVADER_CORE;
+        }
+      });
+      for (var ck = 0; ck < cores.length; ck++) {
+        coreRooms.push({
+          roomName: remoteRoomName,
+          coreId: cores[ck].id,
+          level: cores[ck].level || 0,
+          ticksToDeploy: cores[ck].ticksToDeploy || 0
+        });
+      }
+    }
+  }
+
+  // Update defense memory
+  defense.threatRooms = threatRooms;
+  defense.coreRooms = coreRooms;
+
+  // Defense Mode activation/deactivation
+  if (totalInvaders > 0) {
+    if (!defense.active) {
+      defense.active = true;
+      defense.clearTicks = 0;
+      defense.assignmentVersion++;
+      console.log('[defense] group=' + HOME_ROOM +
+        ' invaders=' + totalInvaders +
+        ' requiredGuards=' + (totalInvaders + 1) + ' mode=on');
+    }
+    defense.invaderCount = totalInvaders;
+    defense.requiredGuards = totalInvaders + 1;
+  } else if (defense.active) {
+    defense.clearTicks++;
+    if (defense.clearTicks >= CLEAR_CONFIRMATION_TICKS) {
+      defense.active = false;
+      defense.invaderCount = 0;
+      defense.requiredGuards = 0;
+      defense.clearTicks = 0;
+      defense.threatRooms = [];
+      defense.cancelPerformed = false;
+      console.log('[defense] group=' + HOME_ROOM +
+        ' clearConfirmation=' + CLEAR_CONFIRMATION_TICKS + '/' +
+        CLEAR_CONFIRMATION_TICKS + ' mode=off');
     }
   }
 }
 
-function hasThreat(remoteConfig) {
-  return !!(remoteConfig && remoteConfig.threat && remoteConfig.threat.type);
-}
+// ── Guard counting ──
 
-function isInvaderThreat(remoteConfig) {
-  return !!(remoteConfig && remoteConfig.threat && remoteConfig.threat.type === 'invader');
-}
-
-function countGuards() {
-  let count = 0;
-  for (const name in Game.creeps) {
-    if (Game.creeps[name].memory.role === 'remoteGuard') {
-      count++;
+function countDefenseGuards(tickRequests) {
+  var alive = 0;
+  for (var name in Game.creeps) {
+    var c = Game.creeps[name];
+    if (c.memory.role === 'guard' &&
+        c.memory.defenseGroup === HOME_ROOM) {
+      alive++;
     }
   }
-  return count;
-}
 
-function countGuardsForRoom(roomName) {
-  let count = 0;
-  for (const name in Game.creeps) {
-    const creep = Game.creeps[name];
-    if (
-      creep.memory.role === 'remoteGuard' &&
-      creep.memory.targetRoom === roomName
-    ) {
-      count++;
+  var spawning = 0;
+  for (var spawnName in Game.spawns) {
+    var spawn = Game.spawns[spawnName];
+    if (!spawn.spawning) continue;
+    var mem = Memory.creeps[spawn.spawning.name];
+    if (mem && mem.role === 'guard' &&
+        mem.defenseGroup === HOME_ROOM) {
+      spawning++;
     }
   }
-  return count;
+
+  var requested = 0;
+  for (var i = 0; i < tickRequests.length; i++) {
+    var req = tickRequests[i];
+    if (req.role === 'guard' &&
+        req.memory && req.memory.defenseGroup === HOME_ROOM) {
+      requested++;
+    }
+  }
+
+  return alive + spawning + requested;
+}
+
+// ── Guard assignment ──
+
+function sortThreatRooms() {
+  var defense = getDefenseMemory();
+  var threatRooms = defense.threatRooms.slice();
+
+  threatRooms.sort(function (a, b) {
+    // Home room first
+    if (a.roomName === HOME_ROOM && b.roomName !== HOME_ROOM) return -1;
+    if (b.roomName === HOME_ROOM && a.roomName !== HOME_ROOM) return 1;
+
+    // Damaged friendlies
+    if (a.friendlyCreepsDamaged > 0 && b.friendlyCreepsDamaged <= 0) return -1;
+    if (b.friendlyCreepsDamaged > 0 && a.friendlyCreepsDamaged <= 0) return 1;
+
+    // More invaders
+    if (a.invaderCount !== b.invaderCount) {
+      return b.invaderCount - a.invaderCount;
+    }
+
+    return 0;
+  });
+
+  return threatRooms;
+}
+
+function getGuardAssignments() {
+  var defense = getDefenseMemory();
+  var sorted = sortThreatRooms();
+
+  var assignments = {};
+  var remaining = defense.requiredGuards;
+
+  // Assign base: invaderCount per room
+  for (var i = 0; i < sorted.length && remaining > 0; i++) {
+    var room = sorted[i];
+    var base = Math.min(room.invaderCount, remaining);
+    assignments[room.roomName] = base;
+    remaining -= base;
+  }
+
+  // Assign extra guard
+  if (remaining > 0) {
+    var extraRoom = sorted[0].roomName;
+    assignments[extraRoom] = (assignments[extraRoom] || 0) + 1;
+  }
+
+  return assignments;
+}
+
+// ── Standby positions ──
+
+function selectStagingRemote() {
+  var defense = getDefenseMemory();
+  var homeConfig = getHomeConfig();
+
+  if (defense.stagingRoom) {
+    var room = Game.rooms[defense.stagingRoom];
+    if (room && room.controller) return defense.stagingRoom;
+  }
+
+  // Pick first enabled remote
+  if (homeConfig && homeConfig.rooms) {
+    for (var rn in homeConfig.rooms) {
+      var rc = homeConfig.rooms[rn];
+      if (rc && rc.enabled !== false) {
+        defense.stagingRoom = rn;
+        return rn;
+      }
+    }
+  }
+  return null;
+}
+
+function computeStandbyPositions(stagingRoom) {
+  var room = Game.rooms[stagingRoom];
+  if (!room || !room.controller) return [];
+
+  var ctrl = room.controller;
+  var positions = [];
+  var used = {};
+
+  // Range 2 first, then range 1
+  var candidates = [];
+  for (var dx = -2; dx <= 2; dx++) {
+    for (var dy = -2; dy <= 2; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      var x = ctrl.pos.x + dx;
+      var y = ctrl.pos.y + dy;
+      if (x <= 0 || x >= 49 || y <= 0 || y >= 49) continue;
+
+      var terrain = Game.map.getRoomTerrain(stagingRoom);
+      if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+      var structures = room.lookForAt(LOOK_STRUCTURES, x, y);
+      var blocked = false;
+      for (var si = 0; si < structures.length; si++) {
+        var st = structures[si].structureType;
+        if (st !== STRUCTURE_ROAD && st !== STRUCTURE_CONTAINER &&
+            st !== STRUCTURE_RAMPART) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) continue;
+
+      var dist = Math.max(Math.abs(dx), Math.abs(dy));
+      var isRoad = false;
+      for (var sj = 0; sj < structures.length; sj++) {
+        if (structures[sj].structureType === STRUCTURE_ROAD) {
+          isRoad = true;
+          break;
+        }
+      }
+
+      var key = x + ':' + y;
+      candidates.push({ x: x, y: y, key: key, dist: dist, isRoad: isRoad });
+    }
+  }
+
+  candidates.sort(function (a, b) {
+    if (a.dist !== b.dist) return a.dist - b.dist; // range 2 preferred
+    if (a.isRoad !== b.isRoad) return a.isRoad ? -1 : 1;
+    return 0;
+  });
+
+  for (var ci = 0; ci < candidates.length && positions.length < 4; ci++) {
+    if (!used[candidates[ci].key]) {
+      positions.push({ x: candidates[ci].x, y: candidates[ci].y });
+      used[candidates[ci].key] = true;
+    }
+  }
+
+  return positions;
+}
+
+function getStandbyPositions(stagingRoom) {
+  if (!Memory.standbyPositions) Memory.standbyPositions = {};
+  if (!Memory.standbyPositions[stagingRoom]) {
+    Memory.standbyPositions[stagingRoom] = computeStandbyPositions(stagingRoom);
+  }
+  return Memory.standbyPositions[stagingRoom];
+}
+
+// ── Guard body ──
+
+function buildGuardBody(energyCapacity) {
+  if (energyCapacity >= 1300) {
+    return [TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE, MOVE];
+  }
+  if (energyCapacity >= 800) {
+    return [TOUGH, ATTACK, ATTACK, MOVE, MOVE, MOVE];
+  }
+  if (energyCapacity >= 300) {
+    return [ATTACK, MOVE, MOVE];
+  }
+  return null;
 }
 
 function getBodyCost(body) {
-  let total = 0;
-  for (let i = 0; i < body.length; i++) {
+  var total = 0;
+  for (var i = 0; i < body.length; i++) {
     total += BODYPART_COST[body[i]] || 0;
   }
   return total;
 }
 
-function buildRemoteGuardBody(energyCapacity) {
-  // 1300 energy: 5 RANGED + 1 HEAL + 6 MOVE
-  if (energyCapacity >= 1300) {
-    return [
-      RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK,
-      HEAL,
-      MOVE, MOVE, MOVE, MOVE, MOVE, MOVE
-    ];
-  }
-  // 800 energy fallback: 3 RANGED + 1 HEAL + 4 MOVE
-  if (energyCapacity >= 800) {
-    return [
-      RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK,
-      HEAL,
-      MOVE, MOVE, MOVE, MOVE
-    ];
-  }
-  return null;
-}
+// ── Spawn request tiers ──
 
-function getSpawnRequest(homeRoomName, remoteRoomName) {
-  const homeConfig = getHomeConfig();
-  if (!homeConfig || !homeConfig.rooms) return null;
+function getDefenseRequests(homeRoomName, currentGuardCount) {
+  var defense = getDefenseMemory();
+  var requests = [];
 
-  const remoteConfig = homeConfig.rooms[remoteRoomName];
-  if (!isInvaderThreat(remoteConfig)) return null;
-  if (countGuards() >= MAX_GUARDS_GLOBAL) return null;
-  if (countGuardsForRoom(remoteRoomName) >= MAX_GUARDS_PER_ROOM) return null;
+  if (!defense.active) return requests;
 
-  const room = Game.rooms[homeRoomName];
-  if (!room) return null;
+  var assignments = getGuardAssignments();
+  var sortedRooms = sortThreatRooms();
 
-  const body = buildRemoteGuardBody(room.energyCapacityAvailable);
-  if (!body) return null;
+  // Activate existing standby guards first
+  for (var name in Game.creeps) {
+    var c = Game.creeps[name];
+    if (c.memory.role !== 'guard') continue;
+    if (c.memory.defenseGroup !== HOME_ROOM) continue;
+    if (c.memory.guardState !== 'standby' &&
+        c.memory.guardState !== 'recycle') continue;
 
-  return {
-    role: 'remoteGuard',
-    name: 'remoteGuard_' + remoteRoomName + '_' + Game.time,
-    body: body,
-    bodyCost: getBodyCost(body),
-    memory: {
-      role: 'remoteGuard',
-      home: homeRoomName,
-      homeRoom: homeRoomName,
-      targetRoom: remoteRoomName,
-      mission: 'clearRemoteInvader'
+    var targetRoom = null;
+    for (var tr = 0; tr < sortedRooms.length; tr++) {
+      var rn = sortedRooms[tr].roomName;
+      if (assignments[rn] > 0) {
+        targetRoom = rn;
+        assignments[rn]--;
+        break;
+      }
     }
-  };
-}
+    if (!targetRoom) continue;
 
-function getGarrisonReplacementRequest(homeRoomName, remoteRoomName) {
-  // Check if there's a garrisoned guard about to die in this room.
-  // Dispatch a replacement before the old guard expires so coverage is continuous.
-  let foundDying = false;
-  for (const name in Game.creeps) {
-    const creep = Game.creeps[name];
-    if (
-      creep.memory.role === 'remoteGuard' &&
-      creep.memory.targetRoom === remoteRoomName &&
-      creep.ticksToLive < REPLACEMENT_TTL
-    ) {
-      foundDying = true;
-      break;
-    }
-  }
-  if (!foundDying) return null;
-
-  // Don't dispatch if the remote already has a threat — threat-based dispatch
-  // has higher priority and the replacement isn't needed yet.
-  const homeConfig = getHomeConfig();
-  const remoteConfig = homeConfig && homeConfig.rooms
-    ? homeConfig.rooms[remoteRoomName]
-    : null;
-  if (isInvaderThreat(remoteConfig)) return null;
-
-  // Global limit check.
-  if (countGuards() >= MAX_GUARDS_GLOBAL) return null;
-
-  const room = Game.rooms[homeRoomName];
-  if (!room) return null;
-
-  const body = buildRemoteGuardBody(room.energyCapacityAvailable);
-  if (!body) return null;
-
-  return {
-    role: 'remoteGuard',
-    name: 'remoteGuard_' + remoteRoomName + '_' + Game.time,
-    body: body,
-    bodyCost: getBodyCost(body),
-    memory: {
-      role: 'remoteGuard',
-      home: homeRoomName,
-      homeRoom: homeRoomName,
-      targetRoom: remoteRoomName,
-      mission: 'garrisonReplacement'
-    }
-  };
-}
-
-function getAllSpawnRequests(homeRoomName) {
-  const requests = [];
-  const homeConfig = getHomeConfig();
-  if (!homeConfig || !homeConfig.rooms) return requests;
-
-  // 1. Threat-based guard dispatch (highest priority)
-  for (const roomName in homeConfig.rooms) {
-    const req = getSpawnRequest(homeRoomName, roomName);
-    if (req) requests.push(req);
+    delete c.memory.standbyRoom;
+    delete c.memory.standbyIndex;
+    delete c.memory.recycleRoom;
+    c.memory.guardState = 'responding';
+    c.memory.defenseTargetRoom = targetRoom;
+    c.memory.assignmentVersion = defense.assignmentVersion;
   }
 
-  // 2. Garrison replacement: preemptively replace dying guards
-  for (const roomName in homeConfig.rooms) {
-    const req = getGarrisonReplacementRequest(homeRoomName, roomName);
-    if (req) requests.push(req);
+  // Count guards after activation
+  var activeGuards = currentGuardCount + requests.length;
+
+  // Spawn new guards if needed
+  while (activeGuards < defense.requiredGuards) {
+    var room = Game.rooms[homeRoomName];
+    if (!room) break;
+
+    var body = buildGuardBody(room.energyCapacityAvailable);
+    if (!body) break;
+
+    requests.push({
+      role: 'guard',
+      priorityTier: 2,
+      name: 'guard_' + homeRoomName + '_' + Game.time + '_' + activeGuards,
+      body: body,
+      bodyCost: getBodyCost(body),
+      memory: {
+        role: 'guard',
+        home: homeRoomName,
+        homeRoom: homeRoomName,
+        defenseGroup: homeRoomName,
+        guardState: 'responding',
+        defenseTargetRoom: sortedRooms.length > 0 ? sortedRooms[0].roomName : null
+      }
+    });
+    activeGuards++;
   }
 
   return requests;
 }
 
-function run() {
-  if (Game.time % DETECT_INTERVAL !== 0) return;
+// ── Public API ──
 
-  const homeConfig = getHomeConfig();
-  if (!homeConfig || !homeConfig.rooms) return;
+function getAllSpawnRequests(homeRoomName) {
+  var requests = [];
+  var defense = getDefenseMemory();
 
-  for (const roomName in homeConfig.rooms) {
-    const remoteConfig = homeConfig.rooms[roomName];
-    scanRemoteRoom(roomName, remoteConfig);
+  // Tier 1: home critical economy
+  var tier1 = getHomeCriticalRequests(homeRoomName);
+  // (handled by rcl2ContainerEconomy separately, not duplicated here)
 
-    // Vision-independent safety net: if a threat hasn't been re-confirmed
-    // for THREAT_TIMEOUT ticks (everyone retreated → no vision → scan can't
-    // see it to clear it), expire it. Without this the threat — and thus the
-    // remote pause — persists forever and haulers/miners never return.
-    if (remoteConfig && remoteConfig.threat) {
-      const lastSeen = remoteConfig.threat.lastSeen ||
-        remoteConfig.threat.since || 0;
-      if (Game.time - lastSeen > THREAT_TIMEOUT) {
-        delete remoteConfig.threat;
-        console.log(
-          '[defense] threat in ' + roomName +
-          ' expired after ' + THREAT_TIMEOUT + ' ticks without vision'
-        );
-      }
+  // Tier 2: defense guards (only when active)
+  if (defense.active) {
+    var guardCount = countDefenseGuards(requests);
+    var defenseReqs = getDefenseRequests(homeRoomName, guardCount);
+    for (var i = 0; i < defenseReqs.length; i++) {
+      requests.push(defenseReqs[i]);
     }
+  }
+
+  return requests;
+}
+
+function getHomeCriticalRequests(homeRoomName) {
+  // Tier 1 is handled by rcl2ContainerEconomy — this function returns empty
+  // as a placeholder. The economy manager has its own priority.
+  return [];
+}
+
+function isDefenseModeActive() {
+  var defense = getDefenseMemory();
+  return defense.active;
+}
+
+function shouldPauseTier3() {
+  return isDefenseModeActive();
+}
+
+function run() {
+  scanDefenseGroup();
+
+  var defense = getDefenseMemory();
+  if (!defense.active) {
+    // Defense Mode off — manage standby/recycle
+    manageStandby();
+  }
+}
+
+function manageStandby() {
+  var defense = getDefenseMemory();
+  var stagingRoom = selectStagingRemote();
+  if (!stagingRoom) return;
+
+  var standbyPositions = getStandbyPositions(stagingRoom);
+  var maxStandby = Math.min(STANDBY_MAX, standbyPositions.length);
+
+  // Collect defense guards
+  var guards = [];
+  for (var name in Game.creeps) {
+    var c = Game.creeps[name];
+    if (c.memory.role === 'guard' &&
+        c.memory.defenseGroup === HOME_ROOM) {
+      guards.push(c);
+    }
+  }
+
+  // Sort by spawn time for stable ordering
+  guards.sort(function (a, b) {
+    return a.name.localeCompare(b.name);
+  });
+
+  // Assign standby to first maxStandby guards
+  var assigned = {};
+  for (var i = 0; i < Math.min(guards.length, maxStandby); i++) {
+    var guard = guards[i];
+    if (guard.memory.guardState === 'recycle') {
+      // Reactivate for standby
+      delete guard.memory.recycleRoom;
+    }
+    guard.memory.guardState = 'standby';
+    guard.memory.standbyRoom = stagingRoom;
+    guard.memory.standbyIndex = i;
+    guard.memory.defenseGroup = HOME_ROOM;
+    assigned[guard.name] = true;
+  }
+
+  // Recycle remaining
+  for (var j = maxStandby; j < guards.length; j++) {
+    var extra = guards[j];
+    if (extra.memory.guardState === 'recycle') continue;
+    extra.memory.guardState = 'recycle';
+    extra.memory.recycleRoom = HOME_ROOM;
+  }
+
+  // Update staging room config
+  if (defense.stagingRoom !== stagingRoom ||
+      !defense.lastStagingUpdate ||
+      Game.time - defense.lastStagingUpdate > 500) {
+    defense.stagingRoom = stagingRoom;
+    defense.lastStagingUpdate = Game.time;
+    console.log('[defense] group=' + HOME_ROOM +
+      ' stagingRoom=' + stagingRoom +
+      ' standbyPositions=' + standbyPositions.length);
+  }
+}
+
+function runGuardStandby(creep) {
+  var stagingRoom = creep.memory.standbyRoom;
+  var standbyPositions = getStandbyPositions(stagingRoom);
+  var idx = creep.memory.standbyIndex || 0;
+
+  if (!standbyPositions || idx >= standbyPositions.length) {
+    return;
+  }
+
+  var pos = standbyPositions[idx];
+  if (creep.pos.x === pos.x && creep.pos.y === pos.y &&
+      creep.pos.roomName === stagingRoom) {
+    return; // Already at position
+  }
+
+  creep.moveTo(new RoomPosition(pos.x, pos.y, stagingRoom), {
+    reusePath: 20
+  });
+}
+
+function runGuardRecycle(creep) {
+  var recycleRoom = creep.memory.recycleRoom || HOME_ROOM;
+
+  if (creep.room.name !== recycleRoom) {
+    creep.moveTo(new RoomPosition(25, 25, recycleRoom), {
+      reusePath: 20
+    });
+    return;
+  }
+
+  var spawns = creep.room.find(FIND_MY_SPAWNS);
+  if (spawns.length === 0) return;
+
+  var spawn = spawns[0];
+  var result = spawn.recycleCreep(creep);
+  if (result === ERR_NOT_IN_RANGE) {
+    creep.moveTo(spawn, { reusePath: 5 });
   }
 }
 
 module.exports = {
-  CLEAR_TICKS: CLEAR_TICKS,
-  DETECT_INTERVAL: DETECT_INTERVAL,
+  HOME_ROOM: HOME_ROOM,
+  CANCEL_EARLY_TICKS: CANCEL_EARLY_TICKS,
+  CLEAR_CONFIRMATION_TICKS: CLEAR_CONFIRMATION_TICKS,
+  STANDBY_MAX: STANDBY_MAX,
   getAllSpawnRequests: getAllSpawnRequests,
-  getSpawnRequest: getSpawnRequest,
-  hasThreat: hasThreat,
-  isInvaderThreat: isInvaderThreat,
-  run: run
+  getDefenseRequests: getDefenseRequests,
+  getHomeCriticalRequests: getHomeCriticalRequests,
+  isDefenseModeActive: isDefenseModeActive,
+  shouldPauseTier3: shouldPauseTier3,
+  getDefenseMemory: getDefenseMemory,
+  run: run,
+  runGuardStandby: runGuardStandby,
+  runGuardRecycle: runGuardRecycle,
+  buildGuardBody: buildGuardBody,
+  getBodyCost: getBodyCost,
+  isHomeCriticalRole: isHomeCriticalRole,
+  isTier3Role: isTier3Role
 };
