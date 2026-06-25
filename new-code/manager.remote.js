@@ -1123,8 +1123,8 @@ function sortReserverRequests(requests) {
     requests[reserverIndices[k]] = reserverReqs[k];
   }
 
-  // Boost: if highest-priority reserver has no reservation, move to front
-  if (reserverReqs[0].reservationTicks <= 0) {
+  // Boost: move highest-priority reserver to front if room has no existing reserver
+  if (!reserverReqs[0].hasExistingReserver) {
     var topReq = reserverReqs[0];
     var topIdx = -1;
     for (var m = 0; m < requests.length; m++) {
