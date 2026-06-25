@@ -1078,14 +1078,20 @@ function countClaimers(targetRoomName) {
 }
 
 function sortReserverRequests(requests) {
-  var reserverReqs = [];
-  var otherReqs = [];
+  // Extract reserver request indices
+  var reserverIndices = [];
   for (var i = 0; i < requests.length; i++) {
     if (requests[i].role === 'reserver') {
-      reserverReqs.push(requests[i]);
-    } else {
-      otherReqs.push(requests[i]);
+      reserverIndices.push(i);
     }
+  }
+
+  if (reserverIndices.length <= 1) return;
+
+  // Build a list of reserver requests to sort
+  var reserverReqs = [];
+  for (var j = 0; j < reserverIndices.length; j++) {
+    reserverReqs.push(requests[reserverIndices[j]]);
   }
 
   reserverReqs.sort(function (a, b) {
@@ -1112,10 +1118,10 @@ function sortReserverRequests(requests) {
     return 0;
   });
 
-  // Replace in-place: other requests first, then sorted reserver requests
-  requests.length = 0;
-  for (var j = 0; j < otherReqs.length; j++) requests.push(otherReqs[j]);
-  for (var k = 0; k < reserverReqs.length; k++) requests.push(reserverReqs[k]);
+  // Write sorted reserver requests back to their original positions
+  for (var k = 0; k < reserverIndices.length; k++) {
+    requests[reserverIndices[k]] = reserverReqs[k];
+  }
 }
 
 function getSpawnRequests(homeRoomName) {
