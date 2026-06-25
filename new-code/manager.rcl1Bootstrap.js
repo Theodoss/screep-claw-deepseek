@@ -287,8 +287,16 @@ function run(room, options) {
     harvesters.healthyEligibleCount < harvesterTarget &&
     harvesters.totalCount < harvesterLimit
   ) {
-    // Harvesters always use basic body (they walk to source and back)
-    trySpawn(spawn, 'rcl1Harvester', BASIC_BODY, sourceIds);
+    // Emergency body for low-energy recovery:
+    // When spawn can't afford [WORK,CARRY,MOVE] (200e), spawn
+    // [CARRY,MOVE] (100e) to withdraw from containers.
+    // Without this, rooms with 0 creeps + 0 harvestable spawn
+    // energy are permanently deadlocked (D014).
+    if (energyCapacity >= 200) {
+      trySpawn(spawn, 'rcl1Harvester', BASIC_BODY, sourceIds);
+    } else if (energyCapacity >= 100) {
+      trySpawn(spawn, 'rcl1Harvester', [CARRY, MOVE], sourceIds);
+    }
     return true;
   }
 
