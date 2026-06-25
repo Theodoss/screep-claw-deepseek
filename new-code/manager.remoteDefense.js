@@ -579,35 +579,41 @@ function getDefenseRequests(homeRoomName, currentGuardCount) {
   return requests;
 }
 
-// ── Core pair spawn requests (M-R-M order) ──
-// Level 1-2 core: 1 melee + 1 ranged
-// Level 3+  core: 2 melee + 1 ranged
+// ── Core cleaner: pure ATTACK+MOVE, no TOUGH/HEAL/RANGED ──
+// Cheaper and faster to spawn than full melee/ranged guard pair.
+// Core does minimal damage aura — TOUGH/HEAL overhead not needed for core busting.
 
-function countCoreGuards(coreRoom, tickRequests) {
-  var melee = 0;
-  var ranged = 0;
+function buildCoreCleanerBody(energyCapacity) {
+  var pairCost = BODYPART_COST[ATTACK] + BODYPART_COST[MOVE]; // 130e per pair
+  var pairs = Math.max(1, Math.min(25, Math.floor(energyCapacity / pairCost)));
+  var body = [];
+  for (var i = 0; i < pairs; i++) {
+    body.push(ATTACK, MOVE);
+  }
+  return body;
+}
+
+function countCoreCleaners(coreRoom, tickRequests) {
+  var count = 0;
 
   for (var name in Game.creeps) {
     var c = Game.creeps[name];
     if (c.memory.coreTargetRoom !== coreRoom) continue;
-    if (c.memory.role === 'guard') melee++;
-    if (c.memory.role === 'remoteGuard') ranged++;
+    if (c.memory.role === 'coreCleaner') count++;
   }
   for (var spawnName in Game.spawns) {
     var spawn = Game.spawns[spawnName];
     if (!spawn.spawning) continue;
     var mem = Memory.creeps[spawn.spawning.name];
     if (!mem || mem.coreTargetRoom !== coreRoom) continue;
-    if (mem.role === 'guard') melee++;
-    if (mem.role === 'remoteGuard') ranged++;
+    if (mem.role === 'coreCleaner') count++;
   }
   for (var ri = 0; ri < tickRequests.length; ri++) {
     var req = tickRequests[ri];
     if (!req.memory || req.memory.coreTargetRoom !== coreRoom) continue;
-    if (req.role === 'guard') melee++;
-    if (req.role === 'remoteGuard') ranged++;
+    if (req.role === 'coreCleaner') count++;
   }
-  return { melee: melee, ranged: ranged };
+  return count;
 }
 
 function getCoreSpawnRequests(homeRoomName) {
@@ -619,64 +625,38 @@ function getCoreSpawnRequests(homeRoomName) {
   var homeRoom = Game.rooms[homeRoomName];
   if (!homeRoom) return requests;
 
-  var energyCapacity = homeRoom.energyCapacityAvailable;
-  var meleeBody = buildMeleeGuardBody(energyCapacity);
-  var rangedBody = buildRangedGuardBody(energyCapacity);
-  if (!meleeBody || !rangedBody) return requests;
+  // Use energyAvailable (actual spawn+ext energy) so we can spawn immediately
+  // when energy is present, rather than waiting for capacityAvailable budget.
+  var budget = homeRoom.energyAvailable;
+  if (budget < 260) return requests; // need at least [A,A,M,M]
 
-  var meleeCost = getBodyCost(meleeBody);
-  var rangedCost = getBodyCost(rangedBody);
+  var body = buildCoreCleanerBody(budget);
+  var bodyCost = getBodyCost(body);
 
   for (var i = 0; i < defense.coreRooms.length; i++) {
     var coreData = defense.coreRooms[i];
     var coreRoom = coreData.roomName;
-    var coreLevel = coreData.level || 1;
+    var coreLevel = coreData.level || 0;
 
-    // Fixed: always 1M + 1R per core. Player adds more via console if needed.
-    var targetMelee = 1;
-    var targetRanged = 1;
+    // One cleaner per core is enough (and cheap to replace if it dies)
+    var targetCount = 1;
+    var currentCount = countCoreCleaners(coreRoom, requests);
 
-    var counts = countCoreGuards(coreRoom, requests);
-    var needMelee = targetMelee - counts.melee;
-    var needRanged = targetRanged - counts.ranged;
-
-    // Spawn order: M first, then R
-    if (needMelee > 0) {
+    if (currentCount < targetCount) {
       requests.push({
-        role: 'guard',
+        role: 'coreCleaner',
         priorityTier: 2,
-        name: 'guard_core_' + coreRoom.replace('W', '').replace('N', '') + '_' + Game.time,
-        body: meleeBody,
-        bodyCost: meleeCost,
+        name: 'coreCleaner_' + coreRoom.replace('W', '').replace('N', '') + '_' + Game.time,
+        body: body,
+        bodyCost: bodyCost,
         memory: {
-          role: 'guard',
+          role: 'coreCleaner',
           home: homeRoomName,
           homeRoom: homeRoomName,
-          defenseGroup: homeRoomName,
-          guardState: 'responding',
-          defenseTargetRoom: coreRoom,
           coreTargetRoom: coreRoom
         }
       });
-      console.log('[defense] core spawn: melee → ' + coreRoom + ' lv' + coreLevel);
-    }
-
-    if (needRanged > 0) {
-      requests.push({
-        role: 'remoteGuard',
-        priorityTier: 2,
-        name: 'remoteGuard_core_' + coreRoom.replace('W', '').replace('N', '') + '_' + Game.time,
-        body: rangedBody,
-        bodyCost: rangedCost,
-        memory: {
-          role: 'remoteGuard',
-          home: homeRoomName,
-          homeRoom: homeRoomName,
-          defenseGroup: homeRoomName,
-          coreTargetRoom: coreRoom
-        }
-      });
-      console.log('[defense] core spawn: ranged → ' + coreRoom + ' lv' + coreLevel);
+      console.log('[defense] core cleaner: ' + body.length / 2 + 'A+M → ' + coreRoom + ' lv' + coreLevel);
     }
   }
 
@@ -863,6 +843,7 @@ module.exports = {
   runGuardStandby: runGuardStandby,
   runGuardRecycle: runGuardRecycle,
   buildGuardBody: buildGuardBody,
+  buildCoreCleanerBody: buildCoreCleanerBody,
   buildMeleeGuardBody: buildMeleeGuardBody,
   buildRangedGuardBody: buildRangedGuardBody,
   getBodyCost: getBodyCost,

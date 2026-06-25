@@ -20,6 +20,7 @@ const rcl2ContainerEconomy = require('manager.rcl2ContainerEconomy');
 const roleRcl1Harvester = require('role.rcl1Harvester');
 const roleUpgrader = require('role.upgrader');
 const roleRcl1Upgrader = require('role.rcl1Upgrader');
+const roleCoreCleaner = require('role.coreCleaner');
 const roleRcl1Builder = require('role.rcl1Builder');
 const roleRcl2Miner = require('role.rcl2Miner');
 const roleRcl2Hauler = require('role.rcl2Hauler');
@@ -49,6 +50,7 @@ const towerManager = require('manager.tower');
 const roomPlanner = require('planner.roomPlanner');
 const construction = require('manager.construction');
 const linkManager = require('manager.link');
+const utilSpawns = require('util.spawns');
 const frontBasePlanner = require('planner.frontBase');
 const linkConfig = require('config.W49N25Links');
 const ROOM_PLANNER_ENABLED = false;
@@ -60,6 +62,7 @@ const LEGACY_ROLES = {
 };
 
 const ROLE_MODULES = {
+  coreCleaner: roleCoreCleaner,
   rcl1Harvester: roleRcl1Harvester,
   upgrader: roleUpgrader,
   rcl1Upgrader: roleRcl1Upgrader,
@@ -457,7 +460,7 @@ module.exports.loop = function () {
     }
 
     // Tier 2: Defense guard spawning (highest non-critical priority)
-    // Handles both invader-creep guards and invader-core pairs (M-R-M order).
+    // Handles both invader-creep guards and invader-core cleaners.
     cpuProfiler.measure('manager.remoteDefense.spawn', function () {
       // Invader-creep guards
       const defenseRequests = remoteDefense.getDefenseRequests(
@@ -467,15 +470,15 @@ module.exports.loop = function () {
             c.memory.defenseGroup === 'W49N25';
         }).length
       );
-      // Invader-core pairs (M-R-M)
+      // Invader-core cleaners (simple ATTACK+MOVE)
       const coreRequests = remoteDefense.getCoreSpawnRequests('W49N25');
       const allDefenseRequests = defenseRequests.concat(coreRequests);
 
       if (allDefenseRequests.length > 0) {
         const homeRoom = Game.rooms['W49N25'];
         if (homeRoom) {
-          const spawn = homeRoom.find(FIND_MY_SPAWNS)[0];
-          if (spawn && !spawn.spawning) {
+          const spawn = utilSpawns.getAvailableSpawn(homeRoom);
+          if (spawn) {
             const req = allDefenseRequests[0];
             if (homeRoom.energyAvailable >= req.bodyCost) {
               const result = spawn.spawnCreep(req.body, req.name, {
