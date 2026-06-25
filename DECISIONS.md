@@ -364,6 +364,46 @@ Game.gcl.level;   // 必須 >= 已擁有房數+1，否則只 hold claimer
 
 ---
 
+## D014 — 近遠配對 guard 體型表 + invader core 主動拆除
+
+- **時間**: 2026-06-25
+- **背景**: W48N25 出現 invader core 但無人處理。根因有三：
+  1. `manager.remoteDefense.js` 掃描到 `coreRooms` 但從未對其採取任何行動
+  2. `defense.active` 只被 invader **creep** 觸發，core 不觸發，故不 spawn guard
+  3. `role.remoteGuard.js` 的 `fight()` 只打 `FIND_HOSTILE_CREEPS`，遇到 core 房間無 creep 時什麼都不做
+  4. `remoteGuard` 在 new-code 中**無任何 spawn 邏輯**（舊的 5RA+1H+6M 是遺留 creep）
+
+- **決策 1 — 近遠配對體型（按 RCL）**：
+  - 近戰（guard）= T+A+H+M，H×1 自補，DPS 是同價遠程的 3–5x
+  - 遠程（remoteGuard）= RA+H+M，補近戰血量並提供 range 輸出
+  - Spawn 順序：M → R → M（近-遠-近）
+
+  | RCL | 近戰體型 | 費用 | 遠程體型 | 費用 |
+  |-----|---------|------|---------|------|
+  | 3 | T×1 A×3 H×1 M×5 | 750 | RA×1 H×1 M×2 | 400 |
+  | 4 | T×2 A×4 H×1 M×7 | 940 | RA×2 H×1 M×3 | 700 |
+  | 5 | T×4 A×6 H×1 M×11 | 1320 | RA×3 H×2 M×5 | 1200 |
+  | 6 | T×6 A×8 H×1 M×15 | 1700 | RA×5 H×2 M×7 | 1600 |
+  | 7 | T×8 A×16 H×1 M×25 | 2860 | RA×10 H×5 M×15 | 3500 |
+  | 8 | T×6 A×18 H×1 M×25 | 3000 | RA×16 H×8 M×16 | 6400 |
+
+- **決策 2 — Invader core 主動拆除**：
+  - Core level 1–2 → 派 1 melee + 1 ranged（2 units）
+  - Core level 3+  → 派 2 melee + 1 ranged（3 units，M-R-M 順序）
+  - Core pair spawn 在 defense mode 未啟動時也執行（不依賴 invader creep 出現）
+
+- **修改的檔案**：
+  1. `manager.remoteDefense.js`：新增 `buildMeleeGuardBody` / `buildRangedGuardBody` / `getCoreSpawnRequests`；scanDefenseGroup 加 core log；getAllSpawnRequests 加 Tier 2b
+  2. `role.remoteGuard.js`：新增 `attackCore` / `findCoreRoom`；run() 加步驟 1b/1c/2b
+  3. `main.js`：Tier 2 spawn 區塊合併 core pair requests
+
+- **給 deepseek 的注意事項**：
+  - `buildGuardBody()` 保留為 `buildMeleeGuardBody()` 的別名，現有呼叫不需改
+  - 請勿把新體型回退成舊的 `[TOUGH, ATTACK, MOVE]` 簡單體型
+  - 常駐巡邏 remoteGuard（非 core 任務）目前仍無 spawn 邏輯，如有需要另行補充
+
+---
+
 ## D013 — reserver body 被回退，重新套用（協作衝突）
 
 - **時間**: 2026-06-22

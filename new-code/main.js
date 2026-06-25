@@ -455,7 +455,9 @@ module.exports.loop = function () {
     }
 
     // Tier 2: Defense guard spawning (highest non-critical priority)
+    // Handles both invader-creep guards and invader-core pairs (M-R-M order).
     cpuProfiler.measure('manager.remoteDefense.spawn', function () {
+      // Invader-creep guards
       const defenseRequests = remoteDefense.getDefenseRequests(
         'W49N25',
         Object.values(Game.creeps).filter(function (c) {
@@ -463,12 +465,16 @@ module.exports.loop = function () {
             c.memory.defenseGroup === 'W49N25';
         }).length
       );
-      if (defenseRequests.length > 0) {
+      // Invader-core pairs (M-R-M)
+      const coreRequests = remoteDefense.getCoreSpawnRequests('W49N25');
+      const allDefenseRequests = defenseRequests.concat(coreRequests);
+
+      if (allDefenseRequests.length > 0) {
         const homeRoom = Game.rooms['W49N25'];
         if (homeRoom) {
           const spawn = homeRoom.find(FIND_MY_SPAWNS)[0];
           if (spawn && !spawn.spawning) {
-            const req = defenseRequests[0];
+            const req = allDefenseRequests[0];
             if (homeRoom.energyAvailable >= req.bodyCost) {
               const result = spawn.spawnCreep(req.body, req.name, {
                 memory: req.memory
