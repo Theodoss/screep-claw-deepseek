@@ -126,6 +126,44 @@ function listPatrolRooms(homeRoom) {
   return out;
 }
 
+// Nearest core room from defense memory.
+function findCoreRoom(creep, homeRoom) {
+  var def = Memory.remoteDefense && Memory.remoteDefense[homeRoom];
+  if (!def || !def.coreRooms || def.coreRooms.length === 0) return null;
+  var best = null;
+  var bestDist = Infinity;
+  for (var i = 0; i < def.coreRooms.length; i++) {
+    var roomName = def.coreRooms[i].roomName;
+    var dist = Game.map.getRoomLinearDistance(creep.pos.roomName, roomName);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = roomName;
+    }
+  }
+  return best;
+}
+
+// Attack invader core in current room.
+function attackCore(creep) {
+  var cores = creep.room.find(FIND_HOSTILE_STRUCTURES, {
+    filter: function (s) {
+      return s.structureType === STRUCTURE_INVADER_CORE;
+    }
+  });
+  if (cores.length === 0) return false;
+
+  var core = cores[0];
+  var range = creep.pos.getRangeTo(core);
+  if (range <= 3) {
+    creep.rangedAttack(core);
+  } else {
+    creep.moveTo(core, { reusePath: 5, maxRooms: 1 });
+  }
+  if (creep.hits < creep.hitsMax) creep.heal(creep);
+  creep.memory.task = 'attackCore:' + core.id;
+  return true;
+}
+
 // Engage hostiles in the current room: kite melee, ranged-attack, self-heal.
 function fight(creep) {
   const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
@@ -216,18 +254,21 @@ function run(creep) {
 
   // 1. Invaders in the current room right now → engage immediately.
   if (creep.pos.roomName !== homeRoom) {
-    const localInvaders = creep.room
+    var localInvaders = creep.room
       .find(FIND_HOSTILE_CREEPS)
       .filter(isInvader);
     if (localInvaders.length > 0) {
       fight(creep);
       return;
     }
+
+    // 1b. Invader core in current room → attack it.
+    if (attackCore(creep)) return;
   }
 
   // 2. Respond to the nearest flagged invader threat: travel in and hold
   //    (off-edge) to keep vision so the threat flag can clear.
-  const threatRoom = findThreatRoom(creep, homeRoom);
+  var threatRoom = findThreatRoom(creep, homeRoom);
   if (threatRoom) {
     creep.memory.targetRoom = threatRoom;
     if (!inRoomOffEdge(creep, threatRoom)) {
@@ -238,6 +279,22 @@ function run(creep) {
       }
     }
     creep.memory.task = 'holding:' + threatRoom;
+    if (creep.hits < creep.hitsMax) creep.heal(creep);
+    return;
+  }
+
+  // 2b. Core room detected → travel there to destroy it.
+  var coreRoom = findCoreRoom(creep, homeRoom);
+  if (coreRoom) {
+    creep.memory.targetRoom = coreRoom;
+    if (!inRoomOffEdge(creep, coreRoom)) {
+      goTo(creep, coreRoom);
+      creep.memory.task = 'toCoreRoom:' + coreRoom;
+      if (creep.hits < creep.hitsMax) creep.heal(creep);
+      return;
+    }
+    // Arrived — attackCore() above will handle it next tick
+    creep.memory.task = 'atCoreRoom:' + coreRoom;
     if (creep.hits < creep.hitsMax) creep.heal(creep);
     return;
   }

@@ -175,6 +175,13 @@ function scanDefenseGroup() {
   defense.threatRooms = threatRooms;
   defense.coreRooms = coreRooms;
 
+  if (coreRooms.length > 0) {
+    console.log('[defense] coreRooms detected: ' +
+      coreRooms.map(function (c) {
+        return c.roomName + '(lvl' + c.level + ')';
+      }).join(', '));
+  }
+
   // Defense Mode activation/deactivation
   if (totalInvaders > 0) {
     if (!defense.active) {
