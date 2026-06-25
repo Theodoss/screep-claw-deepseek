@@ -335,69 +335,95 @@ function deliver(creep, sourceConfig) {
   }
 }
 
-function selectNearbySalvage(creep, sourceConfig) {
-  var dropped = creep.room.find(FIND_DROPPED_RESOURCES);
-  var selected = null;
-
-  for (var index = 0; index < dropped.length; index++) {
-    var resource = dropped[index];
-    if (resource.resourceType !== RESOURCE_ENERGY) continue;
-    if (
-      resource.pos.getRangeTo(
-        sourceConfig.containerX,
-        sourceConfig.containerY
-      ) > 2
-    ) {
-      continue;
-    }
-    if (!selected || resource.amount > selected.target.amount) {
-      selected = { target: resource, type: 'pickup' };
-    }
-  }
-  if (selected) return selected;
-
-  var tombstones = creep.room.find(FIND_TOMBSTONES);
-  for (var index = 0; index < tombstones.length; index++) {
-    var tombstone = tombstones[index];
-    if (
-      tombstone.pos.getRangeTo(
-        sourceConfig.containerX,
-        sourceConfig.containerY
-      ) <= 2 &&
-      tombstone.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-    ) {
-      return { target: tombstone, type: 'withdraw' };
-    }
-  }
-
-  var ruins = creep.room.find(FIND_RUINS);
-  for (var index = 0; index < ruins.length; index++) {
-    var ruin = ruins[index];
-    if (
-      ruin.pos.getRangeTo(
-        sourceConfig.containerX,
-        sourceConfig.containerY
-      ) <= 2 &&
-      ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-    ) {
-      return { target: ruin, type: 'withdraw' };
-    }
-  }
-
-  return null;
-}
-
-function getOtherSourceContainers(creep) {
+// ── Helper: check if own source has an effective remoteMiner ──
+function hasOwnMiner(creep) {
   var homeRoom = creep.memory.homeRoom;
   var remoteRoom = creep.memory.remoteRoom;
   var mySourceIndex = creep.memory.sourceIndex;
-  var result = [];
+
+  for (var name in Game.creeps) {
+    var c = Game.creeps[name];
+    if (c.memory.role !== 'remoteMiner') continue;
+    if (c.memory.homeRoom !== homeRoom && c.memory.home !== homeRoom) continue;
+    if (c.memory.remoteRoom !== remoteRoom && c.memory.remote !== remoteRoom) continue;
+    if (c.memory.sourceIndex !== mySourceIndex && c.memory.sourceId !== mySourceIndex) continue;
+    if (c.ticksToLive > 0) return true;
+  }
+  return false;
+}
+
+// ── Helper: own container overflow (range 1, immediate pickup, no threshold) ──
+function findOwnOverflow(creep, containerX, containerY, containerRoom) {
+  var pos = new RoomPosition(containerX, containerY, containerRoom);
+  var dropped = pos.findInRange(FIND_DROPPED_RESOURCES, 1);
+  for (var i = 0; i < dropped.length; i++) {
+    if (dropped[i].resourceType === RESOURCE_ENERGY && dropped[i].amount > 0) {
+      return dropped[i];
+    }
+  }
+  return null;
+}
+
+// ── Helper: general salvage scan (300 threshold, cooldown-managed) ──
+function findGeneralSalvage(creep) {
+  var freeCapacity = creep.store.getFreeCapacity(RESOURCE_ENERGY);
+  if (freeCapacity < 300) return null;
+
+  // Dropped resources (only energy)
+  var dropped = creep.room.find(FIND_DROPPED_RESOURCES);
+  var best = null;
+  var bestAmount = 0;
+  for (var i = 0; i < dropped.length; i++) {
+    var r = dropped[i];
+    if (r.resourceType !== RESOURCE_ENERGY) continue;
+    var available = Math.min(r.amount, freeCapacity);
+    if (available >= 300 && available > bestAmount) {
+      best = { target: r, type: 'pickup', available: available };
+      bestAmount = available;
+    }
+  }
+  if (best) return best;
+
+  // Tombstones
+  var tombstones = creep.room.find(FIND_TOMBSTONES);
+  for (var j = 0; j < tombstones.length; j++) {
+    var t = tombstones[j];
+    var tEnergy = t.store.getUsedCapacity(RESOURCE_ENERGY);
+    var tAvail = Math.min(tEnergy, freeCapacity);
+    if (tAvail >= 300 && tAvail > bestAmount) {
+      best = { target: t, type: 'withdraw', available: tAvail };
+      bestAmount = tAvail;
+    }
+  }
+
+  // Ruins
+  var ruins = creep.room.find(FIND_RUINS);
+  for (var k = 0; k < ruins.length; k++) {
+    var ru = ruins[k];
+    var ruEnergy = ru.store.getUsedCapacity(RESOURCE_ENERGY);
+    var ruAvail = Math.min(ruEnergy, freeCapacity);
+    if (ruAvail >= 300 && ruAvail > bestAmount) {
+      best = { target: ru, type: 'withdraw', available: ruAvail };
+      bestAmount = ruAvail;
+    }
+  }
+
+  return best;
+}
+
+// ── Helper: get other source containers from remote config ──
+function findOtherContainer(creep) {
+  var homeRoom = creep.memory.homeRoom;
+  var remoteRoom = creep.memory.remoteRoom;
+  var mySourceIndex = creep.memory.sourceIndex;
 
   var homeConfig = Memory.remote && Memory.remote[homeRoom];
-  if (!homeConfig || !homeConfig.rooms) return result;
+  if (!homeConfig || !homeConfig.rooms) return null;
   var remoteConfig = homeConfig.rooms[remoteRoom];
-  if (!remoteConfig || !remoteConfig.sources) return result;
+  if (!remoteConfig || !remoteConfig.sources) return null;
 
+  var bestContainer = null;
+  var bestEnergy = 0;
   for (var i = 0; i < remoteConfig.sources.length; i++) {
     if (i === mySourceIndex) continue;
     var src = remoteConfig.sources[i];
@@ -405,27 +431,128 @@ function getOtherSourceContainers(creep) {
     if (typeof src.containerX !== 'number') continue;
 
     var container = remote.findContainerAt(remoteRoom, src.containerX, src.containerY);
-    if (container) {
-      result.push({
-        container: container,
-        sourceIndex: i,
-        sourceConfig: src
-      });
+    if (!container) continue;
+    var energy = container.store.getUsedCapacity(RESOURCE_ENERGY);
+    if (energy > bestEnergy) {
+      bestEnergy = energy;
+      bestContainer = container;
     }
   }
-  return result;
+  return bestEnergy > 0 ? bestContainer : null;
 }
 
+// ── Helper: get own container (cached ID or lookup) ──
+function getOwnContainer(creep, sourceConfig) {
+  if (sourceConfig._containerId) {
+    var cached = Game.getObjectById(sourceConfig._containerId);
+    if (cached) return cached;
+  }
+  var container = remote.findContainerAt(
+    sourceConfig.roomName,
+    sourceConfig.containerX,
+    sourceConfig.containerY
+  );
+  if (container) {
+    sourceConfig._containerId = container.id;
+  }
+  return container;
+}
+
+// ── Collect target management ──
+function clearCollectTarget(creep) {
+  delete creep.memory.collectTargetId;
+  delete creep.memory.collectTargetType;
+  delete creep.memory.collectTargetLockedAt;
+  delete creep.memory.collectFallback;
+}
+
+function validateCollectTarget(creep) {
+  if (!creep.memory.collectTargetId) return null;
+  var target = Game.getObjectById(creep.memory.collectTargetId);
+  if (!target) return null;
+
+  var targetType = creep.memory.collectTargetType;
+  var freeCap = creep.store.getFreeCapacity(RESOURCE_ENERGY);
+
+  if (targetType === 'ownOverflow') {
+    if (target.amount <= 0 || target.resourceType !== RESOURCE_ENERGY) return null;
+    return { target: target, type: 'pickup' };
+  }
+  if (targetType === 'ownContainer') {
+    if (!target.store || target.store.getUsedCapacity(RESOURCE_ENERGY) <= 0) return null;
+    return { target: target, type: 'withdraw' };
+  }
+  if (targetType === 'salvage') {
+    if (target.amount !== undefined) {
+      if (target.amount <= 0 || Math.min(target.amount, freeCap) < 300) return null;
+      return { target: target, type: 'pickup' };
+    }
+    if (target.store && target.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+      return { target: target, type: 'withdraw' };
+    }
+    return null;
+  }
+  if (targetType === 'fallbackContainer') {
+    if (!target.store || target.store.getUsedCapacity(RESOURCE_ENERGY) <= 0) return null;
+    return { target: target, type: 'withdraw' };
+  }
+  return null;
+}
+
+function executeCollectAction(creep, action) {
+  var result;
+  if (action.type === 'pickup') {
+    result = creep.pickup(action.target);
+  } else {
+    result = creep.withdraw(action.target, RESOURCE_ENERGY);
+  }
+
+  if (result === ERR_NOT_IN_RANGE) {
+    creep.moveTo(action.target, { range: 1, reusePath: 5 });
+    return true;
+  }
+
+  if (result === OK) {
+    if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      clearCollectTarget(creep);
+      creep.memory.delivering = true;
+    }
+    return true;
+  }
+
+  if (result === ERR_NOT_ENOUGH_RESOURCES || result === ERR_FULL) {
+    clearCollectTarget(creep);
+    return true;
+  }
+
+  return true;
+}
+
+// ── Main collect function ──
 function collect(creep, sourceConfig) {
   var containerX = sourceConfig.containerX;
   var containerY = sourceConfig.containerY;
   var containerRoom = sourceConfig.roomName;
-  var containerPosition = new RoomPosition(
-    containerX,
-    containerY,
-    containerRoom
-  );
+  var containerPosition = new RoomPosition(containerX, containerY, containerRoom);
 
+  // ── Already full → deliver ──
+  if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+    clearCollectTarget(creep);
+    creep.memory.delivering = true;
+    return;
+  }
+
+  // ── Locked target ──
+  if (creep.memory.collectTargetId) {
+    var locked = validateCollectTarget(creep);
+    if (locked) {
+      executeCollectAction(creep, locked);
+      return;
+    }
+    clearCollectTarget(creep);
+  }
+
+  // ── Cross-room travel ──
   var moveOpts = {
     range: 1,
     reusePath: 20,
@@ -437,7 +564,6 @@ function collect(creep, sourceConfig) {
     }
   };
 
-  // ── Cross-room travel ──
   if (creep.pos.roomName !== containerRoom) {
     if (followHaulPath(creep, sourceConfig, false)) return;
     creep.moveTo(containerPosition, moveOpts);
@@ -445,13 +571,8 @@ function collect(creep, sourceConfig) {
   }
 
   // ── On container tile → move off ──
-  if (
-    creep.pos.x === containerX &&
-    creep.pos.y === containerY
-  ) {
-    creep.moveTo(remote.getWaitPosition(sourceConfig), {
-      reusePath: 5
-    });
+  if (creep.pos.x === containerX && creep.pos.y === containerY) {
+    creep.moveTo(remote.getWaitPosition(sourceConfig), { reusePath: 5 });
     return;
   }
 
@@ -462,81 +583,72 @@ function collect(creep, sourceConfig) {
     return;
   }
 
-  // ── At range 1 of assigned container ──
+  // ═══════════════════════════════════════════
+  // At range 1 of own container — make decision
+  // ═══════════════════════════════════════════
 
-  // Priority 1: Salvage (dropped, tombstone, ruin) within 2 tiles
-  var salvage = selectNearbySalvage(creep, sourceConfig);
-  if (salvage) {
-    var sResult = salvage.type === 'pickup'
-      ? creep.pickup(salvage.target)
-      : creep.withdraw(salvage.target, RESOURCE_ENERGY);
-    if (sResult === ERR_NOT_IN_RANGE) {
-      creep.moveTo(salvage.target, { reusePath: 5 });
+  // Priority 1: own container overflow (range 1, no threshold)
+  var overflow = findOwnOverflow(creep, containerX, containerY, containerRoom);
+  if (overflow) {
+    creep.memory.collectTargetId = overflow.id;
+    creep.memory.collectTargetType = 'ownOverflow';
+    creep.memory.collectTargetLockedAt = Game.time;
+    executeCollectAction(creep, { target: overflow, type: 'pickup' });
+    return;
+  }
+
+  // Priority 2: own container
+  var ownContainer = getOwnContainer(creep, sourceConfig);
+  if (ownContainer && ownContainer.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    creep.memory.collectTargetId = ownContainer.id;
+    creep.memory.collectTargetType = 'ownContainer';
+    creep.memory.collectTargetLockedAt = Game.time;
+    executeCollectAction(creep, { target: ownContainer, type: 'withdraw' });
+    return;
+  }
+
+  // Priority 3: general salvage (cooldown + 300 threshold)
+  if (
+    creep.memory.nextSalvageScan === undefined ||
+    Game.time >= (creep.memory.nextSalvageScan || 0)
+  ) {
+    var salvage = findGeneralSalvage(creep);
+    creep.memory.nextSalvageScan = Game.time + 10;
+
+    if (salvage) {
+      creep.memory.collectTargetId = salvage.target.id;
+      creep.memory.collectTargetType = 'salvage';
+      creep.memory.collectTargetLockedAt = Game.time;
+      executeCollectAction(creep, salvage);
+      return;
+    }
+  }
+
+  // Priority 4: own miner status check
+  var ownMiner = hasOwnMiner(creep);
+
+  if (ownMiner) {
+    // Miner exists — trust production line, wait at own position
+    creep.memory.nextContainerCheck = Game.time + 5;
+    var waitPos = remote.getWaitPosition(sourceConfig);
+    if (creep.pos.getRangeTo(waitPos) > 0) {
+      creep.moveTo(waitPos, { reusePath: 5 });
     }
     return;
   }
 
-  // Priority 2: Assigned container
-  var container = remote.findContainerAt(
-    sourceConfig.roomName,
-    sourceConfig.containerX,
-    sourceConfig.containerY
-  );
-
-  var assignedEnergy = container
-    ? container.store.getUsedCapacity(RESOURCE_ENERGY)
-    : 0;
-  var assignedCap = container
-    ? container.store.getCapacity(RESOURCE_ENERGY)
-    : 0;
-
-  // If assigned container has enough energy (> 50% capacity or > 0 when small)
-  if (assignedEnergy > 0) {
-    // Only switch if assigned container is below 50% and another has more
-    if (assignedCap > 0 && assignedEnergy < assignedCap * 0.5) {
-      var others = getOtherSourceContainers(creep);
-      var bestOther = null;
-      var bestEnergy = 0;
-      for (var oi = 0; oi < others.length; oi++) {
-        var oe = others[oi].container.store.getUsedCapacity(RESOURCE_ENERGY);
-        if (oe > bestEnergy) {
-          bestEnergy = oe;
-          bestOther = others[oi];
-        }
-      }
-
-      if (bestOther && bestEnergy > assignedEnergy && bestEnergy > 0) {
-        // Switch to other source
-        creep.memory.sourceIndex = bestOther.sourceIndex;
-        creep.moveTo(bestOther.container, { range: 1, reusePath: 5 });
-        return;
-      }
-    }
-
-    // Use assigned container
-    creep.withdraw(container, RESOURCE_ENERGY);
+  // Priority 5: no own miner — fallback to other container
+  var fallback = findOtherContainer(creep);
+  if (fallback) {
+    creep.memory.collectTargetId = fallback.id;
+    creep.memory.collectTargetType = 'fallbackContainer';
+    creep.memory.collectTargetLockedAt = Game.time;
+    creep.memory.collectFallback = true;
+    executeCollectAction(creep, { target: fallback, type: 'withdraw' });
     return;
   }
 
-  // Priority 3: Assigned empty, check others
-  var othersEmpty = getOtherSourceContainers(creep);
-  var bestFallback = null;
-  var bestFallbackEnergy = 0;
-  for (var fi = 0; fi < othersEmpty.length; fi++) {
-    var fe = othersEmpty[fi].container.store.getUsedCapacity(RESOURCE_ENERGY);
-    if (fe > bestFallbackEnergy) {
-      bestFallbackEnergy = fe;
-      bestFallback = othersEmpty[fi];
-    }
-  }
-
-  if (bestFallback && bestFallbackEnergy > 0) {
-    creep.memory.sourceIndex = bestFallback.sourceIndex;
-    creep.moveTo(bestFallback.container, { range: 1, reusePath: 5 });
-    return;
-  }
-
-  // Nothing available → wait
+  // Nothing available — wait
   var waitPosition = remote.getWaitPosition(sourceConfig);
   if (creep.pos.getRangeTo(waitPosition) > 0) {
     creep.moveTo(waitPosition, { reusePath: 5 });
