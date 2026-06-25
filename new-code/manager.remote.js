@@ -1086,7 +1086,7 @@ function sortReserverRequests(requests) {
     }
   }
 
-  if (reserverIndices.length <= 1) return;
+  if (reserverIndices.length === 0) return;
 
   // Build a list of reserver requests to sort
   var reserverReqs = [];
@@ -1121,6 +1121,19 @@ function sortReserverRequests(requests) {
   // Write sorted reserver requests back to their original positions
   for (var k = 0; k < reserverIndices.length; k++) {
     requests[reserverIndices[k]] = reserverReqs[k];
+  }
+
+  // Boost: if highest-priority reserver has no reservation, move to front
+  if (reserverReqs[0].reservationTicks <= 0) {
+    var topReq = reserverReqs[0];
+    var topIdx = -1;
+    for (var m = 0; m < requests.length; m++) {
+      if (requests[m] === topReq) { topIdx = m; break; }
+    }
+    if (topIdx > 0) {
+      requests.splice(topIdx, 1);
+      requests.unshift(topReq);
+    }
   }
 }
 
