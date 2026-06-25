@@ -1,22 +1,34 @@
-const support = require('role.support');
-const sourceSlots = require('manager.rcl1SourceSlots');
-const economy = require('manager.economy');
-const colonyStates = require('config.colonyStates');
-const linkManager = require('manager.link');
+/**
+ * role.upgrader.js — controller upgrader
+ *
+ * Energy priority:
+ *   1. Upgrader Link (if adjacent)
+ *   2. Upgrader Container
+ *   3. Existing fallbacks (spawn/ext/storage/source containers)
+ *
+ * If creep has energy at start of tick, upgrade first then withdraw.
+ */
+
+var support = require('role.support');
+var sourceSlots = require('manager.rcl1SourceSlots');
+var economy = require('manager.economy');
+var colonyStates = require('config.colonyStates');
+var linkManager = require('manager.link');
+var linkConfig = require('config.W49N25Links');
 
 function getFallbackSource(creep) {
   return sourceSlots.selectSourceForSupport(creep.room, creep);
 }
 
 function acquireFallbackEnergy(creep) {
-  const source = getFallbackSource(creep);
+  var source = getFallbackSource(creep);
   if (!source) return;
 
-  const harvested = Math.min(
+  var harvested = Math.min(
     source.energy,
     creep.getActiveBodyparts(WORK) * HARVEST_POWER
   );
-  const result = creep.harvest(source);
+  var result = creep.harvest(source);
   if (result === ERR_NOT_IN_RANGE) {
     creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
   } else if (result === OK) {
@@ -41,7 +53,7 @@ module.exports = {
       return;
     }
 
-    // ── Colony state / expansion guard: stop upgrading, funnel energy to spawn/extensions ──
+    // ── Colony state / expansion guard ──
     var mission = Memory.expansionMission;
     var redirectEnergy =
       colonyStates.isUpgradeSuspended(creep.room.name) ||
@@ -75,6 +87,7 @@ module.exports = {
       }
     }
 
+    // ── working state management ──
     if (
       creep.memory.working &&
       creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0
@@ -89,11 +102,22 @@ module.exports = {
       creep.memory.working = true;
     }
 
-    const economyState = economy.getState(creep.room);
+    var economyState = economy.getState(creep.room);
+    var energyAtStart = creep.store.getUsedCapacity(RESOURCE_ENERGY);
+
     if (creep.memory.working) {
-      // Link → container fill: if controller container is low and link has energy,
-      // spend one tick refilling the container buffer (lower priority than upgrading,
-      // but prevents upgrade stall when link cooldown or remote flow interrupts).
+      // If has energy, upgrade first before any withdraw logic
+      var controller = creep.room.controller;
+      var canUpgrade = controller &&
+        creep.pos.inRangeTo(controller, 3) &&
+        energyAtStart > 0;
+
+      if (canUpgrade) {
+        creep.upgradeController(controller);
+        creep.memory.task = 'upgrade:controller';
+      }
+
+      // Link → container fill (existing behavior)
       if (!economyState.recovery) {
         var fillLink = getLocalLink(
           linkManager.getLinkById(linkManager.LINK_IDS.upgrader),
@@ -108,17 +132,20 @@ module.exports = {
           creep.pos.getRangeTo(fillContainer) <= 1 &&
           creep.pos.getRangeTo(fillLink) <= 3
         ) {
-          // Withdraw from link first (if creep isn't full)
           if (creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
             creep.withdraw(fillLink, RESOURCE_ENERGY);
           }
-          // Then fill container
           if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
             creep.memory.task = 'fill:controller-container';
             creep.transfer(fillContainer, RESOURCE_ENERGY);
           }
           return;
         }
+      }
+
+      if (canUpgrade) {
+        // Already upgraded this tick, still try to fill container
+        return;
       }
 
       if (economyState.recovery) {
@@ -129,41 +156,73 @@ module.exports = {
       return;
     }
 
-    // Priority 1: upgrader link (fastest refill — no walking)
-    var upgraderLink = getLocalLink(
+    // ── Not working: get energy ──
+
+    // Priority 1: Upgrader Link (if adjacent in W49N25)
+    if (!economyState.recovery && creep.room.name === linkConfig.roomName) {
+      var upgraderLink = Game.getObjectById(linkConfig.upgraderLinkId);
+      if (
+        upgraderLink &&
+        upgraderLink.pos.roomName === creep.room.name &&
+        creep.pos.isNearTo(upgraderLink) &&
+        upgraderLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0 &&
+        creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+      ) {
+        creep.memory.task = 'withdraw:upgrader-link';
+        creep.withdraw(upgraderLink, RESOURCE_ENERGY);
+        return;
+      }
+    }
+
+    // Priority 2: Upgrader Link (any range — walk to it in W49N25)
+    if (!economyState.recovery && creep.room.name === linkConfig.roomName) {
+      var upgraderLink2 = Game.getObjectById(linkConfig.upgraderLinkId);
+      if (
+        upgraderLink2 &&
+        upgraderLink2.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      ) {
+        creep.memory.task = 'withdraw:upgrader-link';
+        var linkResult = creep.withdraw(upgraderLink2, RESOURCE_ENERGY);
+        if (linkResult === ERR_NOT_IN_RANGE) {
+          creep.moveTo(upgraderLink2, {
+            visualizePathStyle: { stroke: '#ffaa00' }
+          });
+          return;
+        }
+        if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+          return;
+        }
+      }
+    }
+
+    // Priority 3: Legacy link access (other rooms using old LINK_IDS)
+    var legacyLink = getLocalLink(
       linkManager.getLinkById(linkManager.LINK_IDS.upgrader),
       creep.room.name
     );
     if (
       !economyState.recovery &&
-      upgraderLink &&
-      upgraderLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      legacyLink &&
+      legacyLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0
     ) {
       creep.memory.task = 'withdraw:upgrader-link';
-      const linkResult = creep.withdraw(upgraderLink, RESOURCE_ENERGY);
-      if (linkResult === ERR_NOT_IN_RANGE) {
-        creep.moveTo(upgraderLink, {
+      var legacyResult = creep.withdraw(legacyLink, RESOURCE_ENERGY);
+      if (legacyResult === ERR_NOT_IN_RANGE) {
+        creep.moveTo(legacyLink, {
           visualizePathStyle: { stroke: '#ffaa00' }
         });
         return;
       }
-      // Only return if we actually got energy; otherwise fall through to
-      // container / spawn / storage so the upgrader doesn't get stuck when
-      // the link manager drains the link between our check and withdraw.
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
         return;
       }
     }
 
-    // Preferred: any upgrade container (within 4 tiles of controller)
-    const upgradeContainers = economy.getUpgradeContainers(creep.room);
-    if (
-      !economyState.recovery &&
-      upgradeContainers.length > 0
-    ) {
-      // Pick the fullest upgrade container
-      let selected = upgradeContainers[0];
-      for (let i = 1; i < upgradeContainers.length; i++) {
+    // Priority 4: Upgrade containers
+    var upgradeContainers = economy.getUpgradeContainers(creep.room);
+    if (!economyState.recovery && upgradeContainers.length > 0) {
+      var selected = upgradeContainers[0];
+      for (var i = 1; i < upgradeContainers.length; i++) {
         if (
           upgradeContainers[i].store.getUsedCapacity(RESOURCE_ENERGY) >
           selected.store.getUsedCapacity(RESOURCE_ENERGY)
@@ -174,23 +233,20 @@ module.exports = {
 
       if (selected.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
         creep.memory.task = 'withdraw:upgrade-container';
-        const result = creep.withdraw(selected, RESOURCE_ENERGY);
+        var result = creep.withdraw(selected, RESOURCE_ENERGY);
         if (result === ERR_NOT_IN_RANGE) {
           creep.moveTo(selected, {
             visualizePathStyle: { stroke: '#ffaa00' }
           });
           return;
         }
-        // Only return if we actually got energy; otherwise fall through to
-        // spawn / storage so the upgrader doesn't get stuck when the
-        // container is drained between our check and withdraw.
         if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
           return;
         }
       }
     }
 
-    // Recovery or low RCL: harvest directly from source
+    // Fallbacks: recovery harvest, early RCL2, spawn/ext, source containers, storage
     if (
       economyState.recovery ||
       !creep.room.controller ||
@@ -201,9 +257,6 @@ module.exports = {
       return;
     }
 
-    // Early RCL2 without controller container: self-supply from source containers
-    // or direct harvesting.  Don't drain spawn/extensions — builders need that
-    // energy to build the extensions/containers that unlock normal economy.
     if (
       creep.room.controller &&
       creep.room.controller.level <= 2 &&
@@ -235,10 +288,8 @@ module.exports = {
       return;
     }
 
-    // Spawn/extensions before storage: they are closer to the controller
-    // and faster to reach.  Walking to a distant storage while extensions
-    // have energy wastes upgrader uptime.
-    const spawnExt = creep.pos.findClosestByPath(
+    // Spawn/extensions
+    var spawnExt = creep.pos.findClosestByPath(
       FIND_MY_STRUCTURES,
       {
         filter: function (structure) {
@@ -252,23 +303,20 @@ module.exports = {
     );
     if (spawnExt) {
       creep.memory.task = 'withdraw:spawn-fallback';
-      const result = creep.withdraw(spawnExt, RESOURCE_ENERGY);
-      if (result === ERR_NOT_IN_RANGE) {
+      var seResult = creep.withdraw(spawnExt, RESOURCE_ENERGY);
+      if (seResult === ERR_NOT_IN_RANGE) {
         creep.moveTo(spawnExt, {
           visualizePathStyle: { stroke: '#ffaa00' }
         });
         return;
       }
-      if (result === OK || result === ERR_FULL) {
+      if (seResult === OK || seResult === ERR_FULL) {
         return;
       }
-      // withdraw failed (ERR_NOT_ENOUGH_ENERGY etc): fall through to storage
     }
 
-    // Source container fallback: when spawn/ext/storage are empty but
-    // source containers have buffered energy, walk to one and withdraw.
-    // Trades travel time for guaranteed energy access vs true idle.
-    const sourceContainers = creep.room.find(FIND_STRUCTURES, {
+    // Source containers
+    var sourceContainers = creep.room.find(FIND_STRUCTURES, {
       filter: function (s) {
         return s.structureType === STRUCTURE_CONTAINER &&
           s.store.getUsedCapacity(RESOURCE_ENERGY) > 200;
@@ -288,15 +336,12 @@ module.exports = {
       }
     }
 
-    // Storage fallback (usually farther, deeper energy reserve)
-    const storage = creep.room.storage;
-    if (
-      storage &&
-      storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-    ) {
+    // Storage
+    var storage = creep.room.storage;
+    if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
       creep.memory.task = 'withdraw:storage-fallback';
-      const result = creep.withdraw(storage, RESOURCE_ENERGY);
-      if (result === ERR_NOT_IN_RANGE) {
+      var stResult = creep.withdraw(storage, RESOURCE_ENERGY);
+      if (stResult === ERR_NOT_IN_RANGE) {
         creep.moveTo(storage, {
           visualizePathStyle: { stroke: '#ffaa00' }
         });

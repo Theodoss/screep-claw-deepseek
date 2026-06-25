@@ -1,3 +1,20 @@
+/**
+ * main.js — Screeps AI main loop
+ *
+ * W49N25 Remote Energy Gateway:
+ *   Door Link → Upgrader Link / Storage Link (full-batch transfer)
+ *   doorLinkBalancer: Container → Door Link
+ *   storageLinkBalancer: Storage Link → Storage
+ *   W48N25/W48N26 remoteHauler → Door Link / Door Containers only
+ *
+ * Tick order:
+ *   1. Infrastructure & container site check
+ *   2. Door Link transfer manager
+ *   3. Economy + room managers + balancer spawning
+ *   4. Creep roles (doorLinkBalancer, storageLinkBalancer, etc.)
+ *   5. Stats / intel
+ */
+
 const rcl1Bootstrap = require('manager.rcl1Bootstrap');
 const rcl2ContainerEconomy = require('manager.rcl2ContainerEconomy');
 const roleRcl1Harvester = require('role.rcl1Harvester');
@@ -17,6 +34,8 @@ const roleRemoteGuard = require('role.remoteGuard');
 const roleSquadMelee = require('role.squadMelee');
 const roleSquadHealer = require('role.squadHealer');
 const roleSquadRanged = require('role.squadRanged');
+const roleDoorLinkBalancer = require('role.doorLinkBalancer');
+const roleStorageLinkBalancer = require('role.storageLinkBalancer');
 const military = require('manager.military');
 const remote = require('manager.remote');
 const remoteDefense = require('manager.remoteDefense');
@@ -30,6 +49,7 @@ const roomPlanner = require('planner.roomPlanner');
 const construction = require('manager.construction');
 const linkManager = require('manager.link');
 const frontBasePlanner = require('planner.frontBase');
+const linkConfig = require('config.W49N25Links');
 const ROOM_PLANNER_ENABLED = false;
 const ROOM_PLANNER_ACTIVATION_VERSION = 1;
 
@@ -55,7 +75,9 @@ const ROLE_MODULES = {
   remoteGuard: roleRemoteGuard,
   squadMelee: roleSquadMelee,
   squadHealer: roleSquadHealer,
-  squadRanged: roleSquadRanged
+  squadRanged: roleSquadRanged,
+  doorLinkBalancer: roleDoorLinkBalancer,
+  storageLinkBalancer: roleStorageLinkBalancer
 };
 
 function runBootstrapFallback(room) {
@@ -149,6 +171,222 @@ function getProfileRoleName(creep) {
   return rcl ? role + '@rcl' + rcl : role + '@unknownRcl';
 }
 
+// ── Door buffer container site check (46,6 & 48,6) ──
+var doorContainerCheckCooldown = 0;
+
+function ensureDoorContainers() {
+  if (Game.time < doorContainerCheckCooldown) return;
+  doorContainerCheckCooldown = Game.time + 20;
+
+  var room = Game.rooms[linkConfig.roomName];
+  if (!room || !room.controller || !room.controller.my) return;
+
+  var positions = [
+    { x: 46, y: 6 },
+    { x: 48, y: 6 }
+  ];
+
+  for (var i = 0; i < positions.length; i++) {
+    var x = positions[i].x;
+    var y = positions[i].y;
+
+    // Check if container or site already exists
+    var structures = room.lookForAt(LOOK_STRUCTURES, x, y);
+    var hasContainer = false;
+    for (var j = 0; j < structures.length; j++) {
+      if (structures[j].structureType === STRUCTURE_CONTAINER) {
+        hasContainer = true;
+        break;
+      }
+    }
+    if (hasContainer) continue;
+
+    var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
+    var hasSite = false;
+    for (var k = 0; k < sites.length; k++) {
+      if (sites[k].structureType === STRUCTURE_CONTAINER) {
+        hasSite = true;
+        break;
+      }
+    }
+    if (hasSite) continue;
+
+    // Check terrain
+    var terrain = Game.map.getRoomTerrain(room.name);
+    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+    // Check site limit
+    var activeSites = room.find(FIND_MY_CONSTRUCTION_SITES);
+    if (activeSites.length >= 5) continue;
+
+    room.createConstructionSite(x, y, STRUCTURE_CONTAINER);
+  }
+}
+
+// ── Balancer spawning ──
+function trySpawnStorageLinkBalancer(room) {
+  if (room.name !== linkConfig.roomName) return;
+  if (linkConfig.storageBalancer.role !== 'storageLinkBalancer') return;
+
+  var storageLink = Game.getObjectById(linkConfig.storageLinkId);
+  if (!storageLink) return;
+
+  // Check if already exists
+  var existing = false;
+  var spawning = false;
+  for (var name in Game.creeps) {
+    var c = Game.creeps[name];
+    if (c.memory.role === 'storageLinkBalancer') {
+      existing = true;
+      break;
+    }
+  }
+  if (existing) return;
+
+  // Check if spawning
+  var spawns = room.find(FIND_MY_SPAWNS);
+  for (var si = 0; si < spawns.length; si++) {
+    if (spawns[si].spawning) {
+      var spawnInfo = spawns[si].spawning;
+      if (spawnInfo.name &&
+          spawnInfo.name.indexOf('storageLinkBalancer') === 0) {
+        spawning = true;
+        break;
+      }
+    }
+  }
+  if (spawning) return;
+
+  // Check 17,28 is clear
+  var occupied = room.lookForAt(LOOK_CREEPS, 17, 28);
+  if (occupied.length > 0) return;
+
+  // Find spawn at 16,28
+  var spawn = null;
+  for (var sj = 0; sj < spawns.length; sj++) {
+    if (spawns[sj].pos.x === 16 && spawns[sj].pos.y === 28) {
+      spawn = spawns[sj];
+      break;
+    }
+  }
+  if (!spawn || spawn.spawning) return;
+
+  var body = linkConfig.storageBalancer.body;
+  var cost = body.reduce(function (t, p) { return t + BODYPART_COST[p]; }, 0);
+  if (room.energyAvailable < cost) return;
+
+  var result = spawn.spawnCreep(body,
+    'storageLinkBalancer_' + Game.time,
+    {
+      memory: {
+        role: 'storageLinkBalancer',
+        home: 'W49N25',
+        fixedPos: { roomName: 'W49N25', x: 17, y: 28 },
+        storageLinkId: linkConfig.storageLinkId
+      },
+      directions: [RIGHT]
+    }
+  );
+
+  if (result === OK) {
+    console.log('[spawn] storageLinkBalancer spawned');
+  }
+}
+
+function trySpawnDoorLinkBalancer(room) {
+  if (room.name !== linkConfig.roomName) return;
+
+  var doorLink = Game.getObjectById(linkConfig.doorLinkId);
+  if (!doorLink) return;
+
+  // Check at least one door container exists or has site
+  var hasLeft = false;
+  var hasRight = false;
+  var structures = room.lookForAt(LOOK_STRUCTURES, 46, 6);
+  for (var i = 0; i < structures.length; i++) {
+    if (structures[i].structureType === STRUCTURE_CONTAINER) {
+      hasLeft = true; break;
+    }
+  }
+  if (!hasLeft) {
+    var lSites = room.lookForAt(LOOK_CONSTRUCTION_SITES, 46, 6);
+    for (var j = 0; j < lSites.length; j++) {
+      if (lSites[j].structureType === STRUCTURE_CONTAINER) {
+        hasLeft = true; break;
+      }
+    }
+  }
+  structures = room.lookForAt(LOOK_STRUCTURES, 48, 6);
+  for (var k = 0; k < structures.length; k++) {
+    if (structures[k].structureType === STRUCTURE_CONTAINER) {
+      hasRight = true; break;
+    }
+  }
+  if (!hasRight) {
+    var rSites = room.lookForAt(LOOK_CONSTRUCTION_SITES, 48, 6);
+    for (var m = 0; m < rSites.length; m++) {
+      if (rSites[m].structureType === STRUCTURE_CONTAINER) {
+        hasRight = true; break;
+      }
+    }
+  }
+  if (!hasLeft && !hasRight) return;
+
+  // Check if already exists
+  var existing = false;
+  var spawning = false;
+  for (var name in Game.creeps) {
+    var c = Game.creeps[name];
+    if (c.memory.role === 'doorLinkBalancer') {
+      existing = true;
+      break;
+    }
+  }
+  if (existing) return;
+
+  // Check if spawning
+  var spawns = room.find(FIND_MY_SPAWNS);
+  for (var si = 0; si < spawns.length; si++) {
+    if (spawns[si].spawning) {
+      var spawnInfo = spawns[si].spawning;
+      if (spawnInfo.name &&
+          spawnInfo.name.indexOf('doorLinkBalancer') === 0) {
+        spawning = true;
+        break;
+      }
+    }
+  }
+  if (spawning) return;
+
+  // Check 47,7 is clear
+  var occupied = room.lookForAt(LOOK_CREEPS, 47, 7);
+  if (occupied.length > 0) return;
+
+  // Use first available spawn
+  var spawn = spawns[0];
+  if (!spawn || spawn.spawning) return;
+
+  var body = linkConfig.doorBalancer.body;
+  var cost = body.reduce(function (t, p) { return t + BODYPART_COST[p]; }, 0);
+  if (room.energyAvailable < cost) return;
+
+  var result = spawn.spawnCreep(body,
+    'doorLinkBalancer_' + Game.time,
+    {
+      memory: {
+        role: 'doorLinkBalancer',
+        home: 'W49N25',
+        fixedPos: { roomName: 'W49N25', x: 47, y: 7 },
+        doorLinkId: linkConfig.doorLinkId
+      }
+    }
+  );
+
+  if (result === OK) {
+    console.log('[spawn] doorLinkBalancer spawned');
+  }
+}
+
 module.exports.loop = function () {
   cpuProfiler.begin();
 
@@ -162,18 +400,17 @@ module.exports.loop = function () {
     });
   }
 
-  // 1. 清掉已死亡 creep 的 Memory，避免 Memory 越來越髒
+  // 1. Memory cleanup
   cpuProfiler.measure('memory.cleanup', function () {
     for (const name in Memory.creeps) {
       if (!Game.creeps[name]) {
         rcl1SourceSlots.releaseCreep(name);
         delete Memory.creeps[name];
-        console.log('[memory] cleared dead creep:', name);
       }
     }
   });
 
-  // 舊角色就地遷移，避免切換 manager 後現存 creep 停擺。
+  // Legacy role migration
   cpuProfiler.measure('memory.legacyRoles', function () {
     for (const name in Game.creeps) {
       const creep = Game.creeps[name];
@@ -184,8 +421,27 @@ module.exports.loop = function () {
     }
   });
 
-  // 2. Remote spawning: run FIRST so remote creeps get spawn priority.
-  // isHomeEconomyStable ensures home economy is healthy before we steal the spawn.
+  // 2. Infrastructure: Door container site check
+  try {
+    cpuProfiler.measure('manager.gateway.containers', function () {
+      ensureDoorContainers();
+    });
+  } catch (err) {
+    errorReporter.capture(err, { module: 'manager.gateway.containers' });
+  }
+
+  // 3. Door Link transfer manager (runs BEFORE creep roles so
+  //    doorLinkBalancer can fill the newly-emptied space)
+  try {
+    cpuProfiler.measureRoom('manager.link', 'W49N25', function () {
+      var w49n25 = Game.rooms['W49N25'];
+      if (w49n25) linkManager.run(w49n25);
+    });
+  } catch (err) {
+    errorReporter.capture(err, { module: 'manager.link' });
+  }
+
+  // 4. Remote spawning
   try {
     cpuProfiler.measure('manager.remoteDefense.run', function () {
       remoteDefense.run();
@@ -215,12 +471,10 @@ module.exports.loop = function () {
       }
     });
   } catch (err) {
-    errorReporter.capture(err, {
-      module: 'manager.remote'
-    });
+    errorReporter.capture(err, { module: 'manager.remote' });
   }
 
-  // 3. 每個 room 先更新 container economy，再選 RCL1/RCL2 manager。
+  // 5. Room economy + balancer spawning
   for (const roomName in Game.rooms) {
     const room = Game.rooms[roomName];
     let economyState;
@@ -264,7 +518,6 @@ module.exports.loop = function () {
       }
     }
 
-    // Front-base construction: place sites from Memory.rooms[name].plan
     try {
       cpuProfiler.measureRoom(
         'manager.construction',
@@ -324,6 +577,20 @@ module.exports.loop = function () {
       runBootstrapFallback(room);
     }
 
+    // Balancer spawning (after economy, low priority)
+    try {
+      cpuProfiler.measureRoom(
+        'manager.gateway.spawnBalancers',
+        roomName,
+        function () {
+          trySpawnStorageLinkBalancer(room);
+          trySpawnDoorLinkBalancer(room);
+        }
+      );
+    } catch (err) {
+      errorReporter.capture(err, { module: 'manager.gateway.spawnBalancers' });
+    }
+
     try {
       cpuProfiler.measureRoom(
         'manager.military.trySpawn',
@@ -340,7 +607,7 @@ module.exports.loop = function () {
     }
   }
 
-  // 4. 執行每隻 creep 的 role
+  // 6. Execute creep roles
   for (const name in Game.creeps) {
     const creep = Game.creeps[name];
 
@@ -371,36 +638,22 @@ module.exports.loop = function () {
     }
   }
 
-  // 5. 每 20 tick 輸出給 Codex / 外部 agent 看的狀態
+  // 7. Stats
   if (Game.time % 20 === 0) {
     cpuProfiler.measure('manager.stats.collect', function () {
       stats.collect();
     });
   }
 
-  // 6. 每 100 tick 記錄目前有視野的房間態勢
+  // 8. Intel
   if (Game.time % 100 === 0) {
     try {
       cpuProfiler.measure('manager.intel.collectVisibleRooms', function () {
         intel.collectVisibleRooms();
       });
     } catch (err) {
-      errorReporter.capture(err, {
-        module: 'manager.intel'
-      });
+      errorReporter.capture(err, { module: 'manager.intel' });
     }
-  }
-
-  // 7. Link manager: three-link dynamic balancing (W49N25)
-  try {
-    var w49n25 = Game.rooms['W49N25'];
-    if (w49n25) {
-      cpuProfiler.measureRoom('manager.link', 'W49N25', function () {
-        linkManager.run(w49n25);
-      });
-    }
-  } catch (err) {
-    errorReporter.capture(err, { module: 'manager.link' });
   }
 
   cpuProfiler.end();
