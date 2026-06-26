@@ -352,7 +352,7 @@ function recordUpgrade(room, amount) {
   }
 }
 
-const UPGRADE_CONTAINER_RANGE = 6;
+const UPGRADE_CONTAINER_RANGE = 10;
 
 function getUpgradeContainers(room) {
   // Returns all containers within UPGRADE_CONTAINER_RANGE tiles of
@@ -374,7 +374,27 @@ function getUpgradeContainers(room) {
 
 function getControllerContainer(room) {
   const containers = getUpgradeContainers(room);
-  if (containers.length === 0) return null;
+
+  // Fallback: if no container is within range, use the closest container
+  // to the controller (any distance). This ensures haulers always have
+  // somewhere to deliver upgrade energy, and upgraders find it too.
+  if (containers.length === 0) {
+    const cache = getRoomCache(room);
+    var allContainers = cache.structures.filter(function (s) {
+      return s.structureType === STRUCTURE_CONTAINER;
+    });
+    if (allContainers.length === 0) return null;
+    var closest = allContainers[0];
+    for (var i = 1; i < allContainers.length; i++) {
+      if (
+        allContainers[i].pos.getRangeTo(room.controller) <
+        closest.pos.getRangeTo(room.controller)
+      ) {
+        closest = allContainers[i];
+      }
+    }
+    return closest;
+  }
 
   // Prefer the container with the most energy so haulers and
   // upgraders converge on a well-stocked target.
