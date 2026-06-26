@@ -292,9 +292,20 @@ function run(room, options) {
     // [CARRY,MOVE] (100e) to withdraw from containers.
     // Without this, rooms with 0 creeps + 0 harvestable spawn
     // energy are permanently deadlocked (D014).
-    if (energyCapacity >= 200) {
+    //
+    // D017: In economy-recovery fallback, containers are full
+    // and miners exist — a pure carrier (no WORK) is cheaper
+    // and unblocks energy flow faster.  Halving spawn cost from
+    // 200e → 100e leaves more energy for follow-up hauler spawns.
+    const inRecovery = populationPlan.fallbackActive &&
+      (populationPlan.fallback === 'economy-recovery' ||
+       populationPlan.fallback === 'bootstrap');
+    if (energyCapacity >= 200 && !inRecovery) {
       trySpawn(spawn, 'rcl1Harvester', BASIC_BODY, sourceIds);
     } else if (energyCapacity >= 100) {
+      // Recovery fallback: pure carrier — withdraws from
+      // containers (which are full thanks to existing miners)
+      // and delivers to spawn/extensions.
       trySpawn(spawn, 'rcl1Harvester', [CARRY, MOVE], sourceIds);
     }
     return true;
