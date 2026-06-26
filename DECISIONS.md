@@ -138,5 +138,17 @@
 | W47N22 | 3 | 7.5% → 4 | container-full | ~5.4K | ~19/t |
 
 Remote: W48N25, W48N26, W49N26（全部 active）
-GCL: 19.2M
+GCL: 19.5M
+
+---
+
+## D017 — Recovery fallback 使用純 carrier body
+- **時間**: 2026-06-26 06:00
+- **原因**: W47N22 進入 economy-recovery（storedEnergy 4,955 < 5,000 threshold），
+  spawn 嘗試 200e rcl1Harvester 但能量傳輸跟不上導致 spawn stuck。
+  在 recovery 模式下 containers 已滿、miner 已存在 → 不需要 WORK 部件。
+- **改動**: manager.rcl1Bootstrap.js — recovery/boot fallback 時用 [CARRY,MOVE]（100e）
+  取代 [WORK,CARRY,MOVE]（200e），減半 spawn 成本。
+- **預期**: recovery 更快退出，留下更多能量給 follow-up hauler spawns
+- **狀態**: ✅ 已部署
 
