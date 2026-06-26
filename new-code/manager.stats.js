@@ -137,7 +137,26 @@ module.exports = {
       let haulerCount = 0;
       let haulerCarryParts = 0;
 
-      for (const creep of creeps) {
+      // Count ALL creeps that belong to this room (by home), not just
+      // those physically present.  Remote workers are always in remote
+      // rooms and were invisible to the old room.find() loop, causing
+      // population counters to report 0 for remoteMiner/remoteHauler
+      // even when those creeps were alive and working.
+      const allHomeCreeps = [];
+      for (const cname in Game.creeps) {
+        const c = Game.creeps[cname];
+        if (
+          c.memory.home === roomName ||
+          (!c.memory.home && c.room && c.room.name === roomName)
+        ) {
+          allHomeCreeps.push(c);
+        }
+      }
+      const homeCreeps = allHomeCreeps.length > 0
+        ? allHomeCreeps
+        : creeps;
+
+      for (const creep of homeCreeps) {
         const role = creep.memory.role || 'unknown';
         roleCounts[role] = (roleCounts[role] || 0) + 1;
         if (isUpgraderRole(role)) {
@@ -380,7 +399,7 @@ module.exports = {
           updatedAt: savedPopulationPolicy.updatedAt || null
         },
         population: populationState,
-        myCreeps: creeps.length,
+        myCreeps: homeCreeps.length,
         hostiles: hostileCount,
         sources: sources,
         sourceContainers: sourceContainers,
